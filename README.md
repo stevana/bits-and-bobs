@@ -79,12 +79,15 @@ clunky way.
 import BitsAndBobs
 
 let
-  pat = sized word32 5 ::: sized word32 6 ::: sized word32 5 ::: Nil
-  bs  = byteString [2 :. sized word32 5, 61 :. sized word32 6, 20 :. sized word32 5]
-bitMatch pat bs
+  pattern0    = sized word32 5 ::: sized word32 6 ::: sized word32 5 ::: Nil
+  bytestring0 = byteString [2 :. sized word32 5, 61 :. sized word32 6, 20 :. sized word32 5]
+bitMatch pattern0 bytestring0
   -- => (2,(61,(20,())))
 
-bitMatch (word8 :>>= \sz -> sized bytes sz ::: bytes ::: Nil) (byteString [5 :. word8, "hello, rest" :. bytes])
+let
+  pattern1    = word8 :>>= \sz -> sized bytes sz ::: bytes ::: Nil
+  bytestring1 = byteString [5 :. word8, "hello, rest" :. bytes]
+bitMatch pattern1 bytestring1
   -- => (5,("hello",(", rest",())))
 ```
 
@@ -183,15 +186,15 @@ If any of the above interests you, feel free to get in touch.
 
 ### See also
 
-  * https://www.erlang.org/doc/reference_manual/expressions.html#bit_syntax
-  * https://www.erlang.org/doc/programming_examples/bit_syntax.html
+  * https://www.erlang.org/doc/reference_manual/expressions.html#bit_syntax;
+  * https://www.erlang.org/doc/programming_examples/bit_syntax.html;
   * Joe Armstrong's PhD
     [thesis](http://kth.diva-portal.org/smash/record.jsf?pid=diva2%3A9492&dswid=-1166) (2003),
     p. 60;
-  * https://hackage.haskell.org/package/binary-bits
-  * https://github.com/axman6/BitParser
-  * https://github.com/squaremo/bitsyntax-js
-  * https://capnproto.org/
+  * https://hackage.haskell.org/package/binary-bits;
+  * https://github.com/axman6/BitParser;
+  * https://github.com/squaremo/bitsyntax-js;
+  * https://capnproto.org/.
 
 ### License
 
