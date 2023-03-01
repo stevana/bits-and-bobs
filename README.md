@@ -194,7 +194,9 @@ If any of the above interests you, feel free to get in touch.
   * https://hackage.haskell.org/package/binary-bits;
   * https://github.com/axman6/BitParser;
   * https://github.com/squaremo/bitsyntax-js;
-  * https://capnproto.org/.
+  * https://capnproto.org/;
+  * GNU [poke](https://jemarch.net/poke), extensible editor for structured
+    binary data.
 
 ### License
 
