@@ -196,7 +196,8 @@ If any of the above interests you, feel free to get in touch.
   * https://github.com/squaremo/bitsyntax-js;
   * https://capnproto.org/;
   * GNU [poke](https://jemarch.net/poke), extensible editor for structured
-    binary data.
+    binary data;
+  * https://github.com/wader/fq
 
 ### License
 
