@@ -10,16 +10,20 @@ module BitsAndBobs.Schema (module BitsAndBobs.Schema) where
 
 import Control.Applicative
 import Control.Exception
+import Control.Monad.Except
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Internal as BS
+import qualified Data.ByteString.Unsafe as BS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe
 import Data.String
 import Foreign
 import GHC.Exts
 import GHC.Int
+import Text.Read
 
 import BitsAndBobs.Block
 
@@ -121,9 +125,29 @@ data DecodeError
   | LengthFieldUnknownOffset Field
   deriving stock (Eq, Show)
 
+data Value = ByteStringV ByteString
+  deriving Show
+
+decodeField' :: Schema -> Field -> Block a -> Either DecodeError Value
+decodeField' schema field block =
+  case lookupFieldType field schema of
+    Nothing -> Left undefined
+    Just (ByteString _) -> ByteStringV <$> decodeField schema field block
+
+encodeField' :: Schema -> Field -> Block a -> Value -> IO (Either EncodeError ())
+encodeField' schema field block (ByteStringV bs) = encodeField schema field block bs
+
+readValue :: Schema -> Field -> String -> Either String Value
+readValue schema field string =
+  case lookupFieldType field schema of
+    Nothing -> Left "field isn't in schema"
+    Just ty ->
+      case ty of
+        ByteString _ -> ByteStringV <$> readEither string
+
 class Codec a where
   decodeField :: Schema -> Field -> Block b -> Either DecodeError a
-  encodeField :: Schema -> Field -> Block b -> a -> IO ()
+  encodeField :: Schema -> Field -> Block b -> a -> IO (Either EncodeError ())
 
 instance Codec Int32 where
   decodeField schema field block =
@@ -184,7 +208,42 @@ instance Codec ByteString where
       Just t -> Left (WrongType t)
     where
     !(Ptr addr#) = blockPtr block
-  encodeField = undefined -- schema field block bs = undefined
+  encodeField schema field block bs = runExceptT $ do
+    let ty = ByteString (Fixed (BS.length bs))
+    () <- typeCheckField schema field ty         <?> EncodeTypeError
+    () <- boundCheckField schema field (Just ty) <?> OutOfBoundsError
+    let fieldOffset = fieldOffset_ schema field
+        -- XXX: move into fieldOffset?
+        offset | fieldOffset >= 0 = fieldOffset
+               | otherwise        = fromIntegral (blockLength block) + fieldOffset
+    liftIO (copyBytesFromBS (blockPtr block `plusPtr` offset) bs)
+
+copyBytesFromBS :: Ptr a -> ByteString -> IO ()
+copyBytesFromBS dest bs =
+  -- This is safe because we are not changing `src`.
+  BS.unsafeUseAsCStringLen bs $ \(src, len) ->
+    copyBytes dest (castPtr src) len
+
+fieldOffset_ schema = fromJust . fieldOffset schema
+
+(<?>) :: Monad m => Either l r -> (l -> l') -> ExceptT l' m r
+Left  l <?>  f = throwError (f l)
+Right r <?> _f = return r
+
+data EncodeError = EncodeTypeError FieldTypeError | OutOfBoundsError FieldOutOfBoundsError
+  deriving stock Show
+
+data FieldTypeError = FTE
+  deriving stock Show
+
+typeCheckField :: Schema -> Field -> Type -> Either FieldTypeError ()
+typeCheckField _ _ _ = return ()
+
+data FieldOutOfBoundsError = FOOB
+  deriving stock Show
+
+boundCheckField :: Schema -> Field -> Maybe Type -> Either FieldOutOfBoundsError ()
+boundCheckField _ _ _= return ()
 
 unit_decodeInt32 :: IO ()
 unit_decodeInt32 = allocaBytes 4 $ \ptr -> do

@@ -2,9 +2,11 @@
 
 module Main where
 
-import Data.ByteString
+import Data.String
+import Data.ByteString (ByteString)
 import System.Environment
 import System.Exit
+import System.IO
 
 import BitsAndBobs.Block
 import BitsAndBobs.Schema
@@ -28,12 +30,7 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    [fp] -> go fp
-    _otherwise -> do
-      putStrLn "Usage: first argument must be a filepath to an mp3 file"
-      exitFailure
-  where
-    go fp = do
+    [fp] -> do
       block <- mmapFile fp
       b <- verifyMagic id3v1Schema block
       if not b
@@ -41,12 +38,48 @@ main = do
           putStrLn "Couldn't find magic bytes, doesn't look like a mp3 file."
           exitFailure
         else do
-          let id3v1 :: Either DecodeError Id3V1
-              id3v1 = Id3V1 <$> decodeField id3v1Schema "title" block
-                            <*> decodeField id3v1Schema "artist" block
-          print id3v1
+          hSetBuffering stdout NoBuffering
+          go block
+    _otherwise -> do
+      putStrLn "Usage: first argument must be a filepath to an mp3 file"
+      exitFailure
+  where
+    go block = do
+      putStr "mp3> "
+      l <- getLine
+      case words l of
+        ["help"]   -> putStrLn "schema | read <field> | write <field> <value> | list | q(uit)" >> go block
+        ["schema"] -> print (schemaTypes id3v1Schema) >> go block
+        ["read", field] ->
+            case decodeField' id3v1Schema (fromString field) block of
+              Right v -> print v >> go block
+              Left err -> putStrLn ("decode error: " ++ show err) >> go block
+        ["write", field, value] ->
+          case readValue id3v1Schema (fromString field) value of
+            Left err -> putStrLn ("read error: " ++ err) >> go block
+            Right value' -> do
+              r <- encodeField' id3v1Schema (fromString field) block value'
+              case r of
+                Right () -> go block
+                Left err -> putStrLn ("encode error: " ++ show err) >> go block
+        ["list"] -> do
+          print $ Id3V1 <$> decodeField id3v1Schema "title" block
+                        <*> decodeField id3v1Schema "artist" block
+                        <*> decodeField id3v1Schema "album" block
+                        <*> decodeField id3v1Schema "year" block
+                        <*> decodeField id3v1Schema "comment" block
+          go block
+        ["q"]      -> exitSuccess
+        ["quit"]   -> exitSuccess
+        _otherwise -> putStrLn "invalid command" >> go block
 
-data Id3V1 = Id3V1 { title :: ByteString, artist :: ByteString }
+data Id3V1 = Id3V1
+  { title   :: ByteString
+  , artist  :: ByteString
+  , album   :: ByteString
+  , year    :: ByteString
+  , comment :: ByteString
+  }
   deriving Show
 
 
