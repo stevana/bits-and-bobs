@@ -22,6 +22,8 @@ tested-with:        GHC ==9.0.2
 library
   exposed-modules:
     BitsAndBobs
+    BitsAndBobs.Block
+    BitsAndBobs.Mmap
     BitsAndBobs.Schema
 
   -- GHC boot library dependencies:
@@ -30,6 +32,7 @@ library
     , base        >=4.15.1.0
     , bytestring  ^>=0.11.3.1
     , containers
+    , unix
 
   -- Other dependencies:
   build-depends:
@@ -56,6 +59,14 @@ library
 
   if impl(ghc >=9.4)
     ghc-options: -Wredundant-strictness-flags
+
+executable mp3
+  hs-source-dirs: app
+  main-is:        Main.hs
+  build-depends:
+    , base
+    , bits-and-bobs
+    , bytestring
 
 test-suite test
   default-language: Haskell2010
