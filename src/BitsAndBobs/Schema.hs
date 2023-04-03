@@ -1,46 +1,116 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE UnboxedTuples #-}
 
 module BitsAndBobs.Schema (module BitsAndBobs.Schema) where
 
+import Control.Applicative
 import Control.Exception
-import Data.String
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Internal as BS
-import GHC.Int
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.String
 import Foreign
 import GHC.Exts
+import GHC.Int
+
+import BitsAndBobs.Block
 
 ------------------------------------------------------------------------
 
-newtype Schema = Schema (Map Field Type)
+data Schema = Schema
+  { schemaTypes      :: Map Field Type
+  , schemaFieldOrder :: [Field]
+  -- XXX: offsets?
+  }
+  deriving stock (Eq, Show)
 
-newtype Field = Field String
-  deriving newtype (IsString, Eq, Ord)
+newtype Field = MkField String
+  deriving newtype (IsString, Eq, Ord, Show)
 
-data Type = Int32 | ByteString Field
-  deriving stock Eq
+data Type = Magic ByteString | Int32 | ByteString Size | UInt8 | Binary | Record Schema | Array Size Type
+  deriving stock (Eq, Show)
+
+data Size = Fixed Int | Variable Field | NullTerminated
+  deriving stock (Eq, Show)
+
+newSchema :: [(Field, Type)] -> Schema
+newSchema fts = Schema (Map.fromList fts) (map fst fts)
+
+lookupFieldType :: Field -> Schema -> Maybe Type
+lookupFieldType field schema = Map.lookup field (schemaTypes schema)
+
+schemaToList :: Schema -> [(Field, Type)]
+schemaToList schema = go [] (schemaFieldOrder schema)
+  where
+    go acc []               = reverse acc
+    go acc (field : fields) = go ((field, schemaTypes schema Map.! field) : acc) fields
+
+schemaToReverseList :: Schema -> [(Field, Type)]
+schemaToReverseList schema = go [] (schemaFieldOrder schema)
+  where
+    go acc []               = acc
+    go acc (field : fields) = go ((field, schemaTypes schema Map.! field) : acc) fields
 
 exampleSchema :: Schema
-exampleSchema = Schema (Map.fromList [("length", Int32), ("string", ByteString "length")])
+exampleSchema = newSchema [("length", Int32), ("string", ByteString (Variable "length"))]
 
 fieldOffset :: Schema -> Field -> Maybe Int
-fieldOffset (Schema schema) field = go (Just 0) (Map.toList schema)
+fieldOffset schema field
+  =   go  (Just 0) (schemaToList schema)
+  <|> go' (Just 0) (schemaToReverseList schema)
   where
     go _acc [] = Nothing
-    go acc ((field', type') : fts)
+    go acc ((field', ty) : fts)
       | field == field' = acc
-      | otherwise       = go ((+) <$> acc <*> sizeOfType type') fts
+      | otherwise       = go ((+) <$> acc <*> sizeOfType ty) fts
+
+    go' _acc [] = Nothing
+    go' acc ((field', ty) : fts)
+      | field == field' = fmap negate ((+) <$> acc <*> sizeOfType ty)
+      | otherwise       = go' ((+) <$> acc <*> sizeOfType ty) fts
+
+verifyMagic :: Schema -> Block a -> IO Bool
+verifyMagic schema block = go True (Map.toList (schemaTypes schema))
+  where
+    go False _                          = return False
+    go _acc []                          = return True
+    go acc ((field, Magic magic) : fts) = do
+      let eBs = decodeField schema field block
+      case eBs of
+        Left _decodeError -> return False
+        Right bs          -> go (bs == magic && acc)fts
+    go acc ((_field, _type) : fts) = go acc fts
+
+data Accessor = Field Field | Index Int | Accessor :. Accessor
+
+data AccessorTypeError = TE
+
+typeCheckAccessor :: Schema -> Accessor -> Either AccessorTypeError ()
+typeCheckAccessor = undefined
+
+data OutOfBoundsError = OOB
+
+boundCheck :: Schema -> Accessor -> Maybe a -> Either OutOfBoundsError ()
+boundCheck = undefined
+
+accessorOffset :: Schema -> Accessor -> Int
+accessorOffset schema (Field field) = undefined
 
 sizeOfType :: Type -> Maybe Int
-sizeOfType Int32 = Just 4
-sizeOfType (ByteString _lengthField) = Nothing
+sizeOfType (Magic bs)                        = Just (BS.length bs)
+sizeOfType UInt8                             = Just (sizeOf (1 :: Word8))
+sizeOfType Int32                             = Just (sizeOf (4 :: Int32))
+sizeOfType (ByteString (Fixed len))          = Just len
+sizeOfType (ByteString (Variable _lenField)) = Nothing
+sizeOfType Binary                            = Nothing
 
 data DecodeError
   = WrongField Field
@@ -49,42 +119,79 @@ data DecodeError
   | WrongLengthField Field
   | FieldUnknownOffset Field
   | LengthFieldUnknownOffset Field
-  deriving stock Eq
+  deriving stock (Eq, Show)
 
 class Codec a where
-  decodeField :: Schema -> Field -> Ptr b -> Either DecodeError a
+  decodeField :: Schema -> Field -> Block b -> Either DecodeError a
+  encodeField :: Schema -> Field -> Block b -> a -> IO ()
 
 instance Codec Int32 where
-  decodeField (Schema schema) field (Ptr addr#) = case Map.lookup field schema of
-    Nothing    -> Left (WrongField field)
-    Just Int32 -> case fieldOffset (Schema schema) field of
-      Nothing -> Left (FieldUnknownOffset field)
-      Just (I# offset#) -> Right (I32# (indexInt32OffAddr# (addr# `plusAddr#` offset#) 0#))
-    Just t     -> Left (WrongType t)
+  decodeField schema field block =
+    helper (\offset# -> I32# (indexInt32OffAddr# (addr# `plusAddr#` offset#) 0#)) -- XXX: negative offset = read from back of file
+    where
+    !(Ptr addr#) = blockPtr block
+    helper f =
+      case lookupFieldType field schema of
+        Nothing    -> Left (WrongField field)
+        Just Int32 ->
+          case fieldOffset schema field of
+            Nothing -> Left (FieldUnknownOffset field)
+            Just (I# offset#) -> Right (f offset#)
+        Just t     -> Left (WrongType t)
+  encodeField = undefined
 
 instance Codec ByteString where
-  decodeField (Schema schema) field (Ptr addr#) =
-    case Map.lookup field schema of
+  decodeField schema field block =
+    case lookupFieldType field schema of
       Nothing -> Left (WrongField field)
-      Just (ByteString lengthField) ->
-        case Map.lookup lengthField schema of
+      Just (Magic magic) ->
+        let len = BS.length magic in
+        case fieldOffset schema field of
+          Nothing -> undefined
+          Just offset@(I# offset#) | offset >= 0 ->
+            Right (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` offset#)) len))
+                                   | otherwise -> do
+            let blockLen# = case fromIntegral (blockLength block) of
+                              I# len# -> len#
+            Right (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` blockLen# `plusAddr#` offset#)) len))
+
+      Just (ByteString (Fixed len)) ->
+        case fieldOffset schema field of
+          Nothing -> undefined
+          Just offset@(I# offset#) | offset >= 0 ->
+            Right (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` offset#)) len))
+                                   | otherwise -> do
+            let blockLen# = case fromIntegral (blockLength block) of
+                              I# len# -> len#
+            Right (BS8.takeWhile (/= '\NUL')
+                   (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` blockLen# `plusAddr#` offset#)) len)))
+
+      Just (ByteString (Variable lengthField)) ->
+        case lookupFieldType lengthField schema of
           Nothing -> Left (WrongLengthField lengthField)
           Just Int32 ->
-            case fieldOffset (Schema schema) lengthField of
+            case fieldOffset schema lengthField of
               Nothing -> Left (LengthFieldUnknownOffset lengthField)
-              Just (I# offset#) -> do
+              Just offset@(I# offset#) | offset >= 0 -> do
                 let lengthAddr# = addr# `plusAddr#` offset#
                     len = fromIntegral (I32# (indexInt32OffAddr# lengthAddr# 0#))
                 Right (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` 4#)) len))
+                                           | otherwise -> do
+                let blockLen = blockLength block
+                undefined
+
           Just t -> Left (WrongLengthType t)
       Just t -> Left (WrongType t)
+    where
+    !(Ptr addr#) = blockPtr block
+  encodeField = undefined -- schema field block bs = undefined
 
 unit_decodeInt32 :: IO ()
 unit_decodeInt32 = allocaBytes 4 $ \ptr -> do
   let i :: Int32
       i = 1234
   poke ptr i
-  let j = decodeField exampleSchema "length" ptr
+  let j = decodeField exampleSchema "length" (Block ptr 4)
   assert (j == Right i) (return ())
 
 unit_decodeBS :: IO ()
@@ -94,5 +201,5 @@ unit_decodeBS = allocaBytes (sizeOf (4 :: Int32) + length ("hello" :: String)) $
   poke ptr len
   let hello = map BS.c2w "hello"
   pokeArray (ptr `plusPtr` sizeOf (4 :: Int32)) hello
-  let bs = decodeField exampleSchema "string" ptr
+  let bs = decodeField exampleSchema "string" (Block ptr 9)
   assert (bs == Right (BS.pack hello)) (return ())
