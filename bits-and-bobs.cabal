@@ -23,6 +23,7 @@ library
   exposed-modules:
     BitsAndBobs
     BitsAndBobs.Block
+    BitsAndBobs.Generic
     BitsAndBobs.Mmap
     BitsAndBobs.Schema
 

@@ -1,14 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Main where
 
-import Data.String
 import Data.ByteString (ByteString)
+import Data.String
+import GHC.Generics
 import System.Environment
 import System.Exit
 import System.IO
 
 import BitsAndBobs.Block
+import BitsAndBobs.Generic
 import BitsAndBobs.Schema
 
 ------------------------------------------------------------------------
@@ -63,11 +66,7 @@ main = do
                 Right () -> go block
                 Left err -> putStrLn ("encode error: " ++ show err) >> go block
         ["list"] -> do
-          print $ Id3V1 <$> decodeField id3v1Schema "title" block
-                        <*> decodeField id3v1Schema "artist" block
-                        <*> decodeField id3v1Schema "album" block
-                        <*> decodeField id3v1Schema "year" block
-                        <*> decodeField id3v1Schema "comment" block
+          print (decode id3v1Schema block :: Either DecodeError Id3V1)
           go block
         ["q"]      -> exitSuccess
         ["quit"]   -> exitSuccess
@@ -80,7 +79,9 @@ data Id3V1 = Id3V1
   , year    :: ByteString
   , comment :: ByteString
   }
-  deriving Show
+  deriving (Show, Generic)
+
+instance Decode Id3V1
 
 
 {-
