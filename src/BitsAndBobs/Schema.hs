@@ -63,6 +63,13 @@ schemaToReverseList schema = go [] (schemaFieldOrder schema)
     go acc []               = acc
     go acc (field : fields) = go ((field, schemaTypes schema Map.! field) : acc) fields
 
+prettySchema :: Schema -> String
+prettySchema = go [] . schemaToList
+  where
+    go :: [String] -> [(Field, Type)] -> String
+    go acc [] = unlines (reverse acc)
+    go acc ((MkField field, ty) : fts) = go ((field ++ " : " ++ show ty) : acc) fts
+
 fieldOffset :: Schema -> Field -> Maybe Int
 fieldOffset schema field
   =   go  (Just 0) (schemaToList schema)
@@ -124,6 +131,9 @@ data DecodeError
 
 data Value = ByteStringV ByteString
   deriving Show
+
+prettyValue :: Value -> String
+prettyValue (ByteStringV bs) = show bs
 
 decodeField' :: Schema -> Field -> Block a -> Either DecodeError Value
 decodeField' schema field block =
