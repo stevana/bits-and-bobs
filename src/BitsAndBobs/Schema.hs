@@ -63,9 +63,6 @@ schemaToReverseList schema = go [] (schemaFieldOrder schema)
     go acc []               = acc
     go acc (field : fields) = go ((field, schemaTypes schema Map.! field) : acc) fields
 
-exampleSchema :: Schema
-exampleSchema = newSchema [("length", Int32), ("string", ByteString (Variable "length"))]
-
 fieldOffset :: Schema -> Field -> Maybe Int
 fieldOffset schema field
   =   go  (Just 0) (schemaToList schema)
@@ -244,6 +241,9 @@ data FieldOutOfBoundsError = FOOB
 
 boundCheckField :: Schema -> Field -> Maybe Type -> Either FieldOutOfBoundsError ()
 boundCheckField _ _ _= return ()
+
+exampleSchema :: Schema
+exampleSchema = newSchema [("length", Int32), ("string", ByteString (Variable "length"))]
 
 unit_decodeInt32 :: IO ()
 unit_decodeInt32 = allocaBytes 4 $ \ptr -> do
