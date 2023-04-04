@@ -8,14 +8,10 @@
 
 module BitsAndBobs.Schema (module BitsAndBobs.Schema) where
 
-import Data.Text (Text)
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
 import Control.Applicative
 import Control.Exception
 import Control.Monad.Except
 import Data.ByteString (ByteString)
-import Data.Monoid
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Internal as BS
@@ -24,9 +20,13 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.String
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Foreign
 import GHC.Exts
 import GHC.Int
+import GHC.IO (IO(IO))
 import Text.Read
 
 import BitsAndBobs.Block
@@ -173,7 +173,14 @@ instance Codec Int32 where
             Nothing -> Left (FieldUnknownOffset field)
             Just (I# offset#) -> Right (f offset#)
         Just t     -> Left (WrongType t)
-  encodeField = undefined
+  encodeField schema field block (I32# i32) = do
+    let fieldOffset = fieldOffset_ schema field
+        offset | fieldOffset >= 0 = fieldOffset
+               | otherwise        = fromIntegral (blockLength block) + fieldOffset
+        !(Ptr addr#) = blockPtr block
+        !(I# offset#) = offset
+    liftIO $ IO $ \s ->
+      (# writeInt32OffAddr# (addr# `plusAddr#` offset#) 0# i32 s, Right () #)
 
 instance Codec ByteString where
   decodeField schema field block =
