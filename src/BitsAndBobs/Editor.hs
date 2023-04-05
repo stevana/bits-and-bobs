@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module BitsAndBobs.Editor (module BitsAndBobs.Editor) where
@@ -15,10 +16,10 @@ import BitsAndBobs.Schema
 
 ------------------------------------------------------------------------
 
-data Edit a = Edit Schema
+data Edit a = Edit { editName :: Text, editSchema :: Schema }
 
 edit :: forall a. (Show a, Decode a) => Edit a -> FilePath -> IO ()
-edit (Edit schema) file = do
+edit (Edit name schema) file = do
   block <- mmapFile file
 
   b <- verifyMagic schema block
@@ -35,7 +36,7 @@ edit (Edit schema) file = do
     go block = loop
       where
         loop = do
-          putStr "mp3> "
+          Text.putStr (name <> "> ")
           l <- getLine
           case words l of
             ["help"]   -> Text.putStrLn help >> loop
@@ -57,4 +58,4 @@ edit (Edit schema) file = do
               loop
             ["q"]      -> exitSuccess
             ["quit"]   -> exitSuccess
-            _otherwise -> putStrLn "invalid command" >> loop
+            _otherwise -> Text.putStrLn "invalid command" >> loop

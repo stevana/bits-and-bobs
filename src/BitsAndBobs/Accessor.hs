@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module BitsAndBobs.Accessor (module BitsAndBobs.Accessor) where
 
 import BitsAndBobs.Schema
