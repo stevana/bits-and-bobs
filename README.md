@@ -151,7 +151,7 @@ Inspired by this problem and how tools like [`poke`](https://jemarch.net/poke)
 work, I've started another experiment based on `Schema`s with this use case in
 mind, here's an example session of editing the metadata of an mp3 file:
 
-```bash
+```
 $ cabal run mp3 -- /tmp/test.mp3
 
 mp3> help
@@ -249,7 +249,7 @@ compression?
 * Convert from and to protobufs or avro?
 
 * Not yet another interface description language
-  [(IDL)](https://en.wikipedia.org/wiki/Interface_description_language), but
+  ([IDL](https://en.wikipedia.org/wiki/Interface_description_language)), but
   rather a DSL for IDLs?
 
 ### Contributing
@@ -298,7 +298,11 @@ If any of the above interests you, feel free to get in touch.
   * https://capnproto.org/;
   * GNU [poke](https://jemarch.net/poke), extensible editor for structured
     binary data;
-  * https://github.com/wader/fq
+  * https://github.com/wader/fq;
+  * *Designing Data-Intensive Applications* by Martin Kleppmann (chapter 3-4,
+    2017);
+  * *Development and Deployment of Multiplayer Online Games, Vol. I* by Sergey
+     Ignatchenko (pp. 200-216 and 259-285, 2017).
 
 ### License
 
