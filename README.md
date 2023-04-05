@@ -180,10 +180,12 @@ Right (Id3V1 {title = "Bits and Bobs", artist = "", album = "", year = "2023", c
 mp3> quit
 ```
 
-Basically the user needs to specify the `Schema`, which is closely mapped to the
-ID3v1 specficiation and the rest is provided by the library. The above
-interactive [editor](app/Main.hs) is completely
-[generic](src/BitsAndBobs/Editor.hs) and works for any `Schema`!
+The user needs to specify the `Schema`, which is closely mapped to the ID3v1
+specficiation and the rest is provided by the library. In particular all the
+offsets to the different fields are calculated from the schema, which allow us
+to jump straight to the field of interest without parsing. The above interactive
+[editor](app/Main.hs) is completely [generic](src/BitsAndBobs/Editor.hs) and
+works for any `Schema`!
 
 #### On-disk data structures
 
@@ -202,15 +204,21 @@ something like `cat` and `grep` but generic in `Schema`.
 
 #### Zero-copy
 
-How can we do zero-copy/zero-parse stuff? E.g. lets say we have a pre-allocated
-byte array/pointer to `Word8` buffer, we could then use
-[`recvBufFrom`](https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html#v:recvBufFrom)`
-:: Socket -> Ptr a -> Int -> IO (Int, SockAddr)` to receive network traffic from
-a socket into that buffer and thus avoiding copying and therefore allocating
-memory. Imagine we use some protocol where we can inspect the first few bits to
-find out which type of message it is, and based on the message type we know at
-what offsets its fields are, could we then project those fields by merely
-casting (i.e. avoid parsing)?
+When we `read` a `ByteString` field in the mp3 metadata example above, we copied
+the bytes from the underlying file. Sometimes we might want to avoid doing that.
+
+For example imagine we are implementing some network protocol. We can use a
+pre-allocated buffer and [`recv`](https://linux.die.net/man/2/recv) bytes from a
+socket into this buffer (avoiding allocating memory while handling requests),
+once the request is inside our buffer we can decode individual fields (without
+parsing) and from that we can determine what kind of request it is. Let's
+imagine it's some kind of write request where we want to save the payload of
+some field to disk. It would be a waste to copy the bytestring of the payload
+only to write it disk immediately after, since the network request consists of
+raw bytes and that's what we want to write to the disk anyway. Instead we'd like
+to be able to decode the payload field as a pointer/slice of the buffer which we
+pass to [`write`](https://linux.die.net/man/2/write) (thus avoiding copying aka
+"zero-copy").
 
 #### Backward- and forward-compatiability and migrations
 
@@ -223,22 +231,35 @@ migrate old formats into newer ones somehow also.
 Currently our schemas cannot express how to compress fields on disk, or how to
 avoid sending unnecessary data in consecutive network messages.
 
-An example of the former might be to
+An example of the former might be to compress a bytestring field, using say
+[deflate](https://en.wikipedia.org/wiki/Deflate), before writing it to disk.
+While an example of the former might be to only send the difference or change of
+some integer field, instead of sending the whole integer again. To make things
+more concrete, lets say the integer represents epoch time and we send messages
+several times per second, then by only sending the difference or
+[delta](https://en.wikipedia.org/wiki/Delta_encoding) in time since the last
+message we can save space. Other examples of compression include
+[dictionary](https://en.wikipedia.org/wiki/Dictionary_coder) compression,
+[run-length encoding](https://en.wikipedia.org/wiki/Run-length_encoding), [bit
+packing](https://en.wikipedia.org/wiki/Apache_Parquet#Bit_packing) and [Huffman
+coding](https://en.wikipedia.org/wiki/Huffman_coding).
 
-- [deflate](https://en.wikipedia.org/wiki/Deflate)
-- dictionary
-- [rle](https://en.wikipedia.org/wiki/Run-length_encoding)
-- bit packing
+It would be neat if encoding and decoding fields could be done modulo
+compression! Likewise the schema-based `cat` and `grep` could also work modulo
+compression.
 
-the latter:
-
-- delta encoding
-- dead reckoning?
-
-Another question would be if we can encode and pattern-match modulo (column)
-compression?
-
-* Row-based vs columnar, AoS vs SoA (migrate to optimise search?)
+A related topic is storing our data in a row-based or columnar fashion. Take the
+example of a logging library we discussed earlier with a schema that's an array
+of records, i.e. each log call adds a new record to the array. This is nice in
+terms of writing efficiency, but if we wanted to do a lot of grepping or some
+aggregation on some field in the record then we'd have to jump around a lot in
+the file (jumping over the other fields that we are not interested in). It could
+be more efficient to restructure our data into a record of arrays stead, where
+each array only has data from one field, that way searching or aggregating over
+that field would be much more efficient (no jumping around). Some compression is
+also a lot easier to apply on columnar data, i.e. delta and run-length encoding.
+Perhaps it would make sense if the schema-based tools could do such data
+transformations in order to optimise for reads or archiving?
 
 #### Pandoc for binary formats?
 
