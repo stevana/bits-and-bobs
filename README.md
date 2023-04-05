@@ -1,6 +1,6 @@
 # bits-and-bobs
 
-A Haskell library for working with binary data, inspired by Erlang's bit syntax.
+A library for working with binary data, inspired by Erlang's bit syntax.
 
 ### Motivation
 
@@ -118,52 +118,89 @@ before converted into bits, and `Int`egers are encoding using
 [zigzag](https://en.wikipedia.org/wiki/Variable-length_quantity#Zigzag_encoding)
 encoding.
 
-### Contributing
+### Extending Erlang's bit syntax
 
-There's a bunch of small things, that I know, are missing from Erlang:
+Erlang's bit syntax makes it possible to decode binary data into the host
+languague's types, which can then be manipulated, and finally encoded back to
+binary.
 
-  * Support for more types: `Word16`, `Word64`, `Int16`, `Int32`, `Int64`,
-    `Double`, `BitString`, `Text`;
-  * Error checking, e.g. user provided size cannot be bigger than the size of
-    the type, or not enough bits to make a match;
-  * Underscore patterns;
-  * Unit type specifier.
+While already useful, it doesn't cover some interesting use cases. Let me try to
+explain the use cases and at the same time sketch possible ways we can extend
+Erlang's bit syntax to cover those.
 
-A couple of things that could make it more convenient to use:
+#### In-place updates
 
-  * Return ADT instead of tuples when matching, perhaps using `Monad` or `Arrow`
-    interface?
-  * Generic encode/decode?
-  * Quasi quoting?
+What if we merely want to update some binary in-place without reading it all in
+and writing it all back out?
 
-There's a couple of things that can be optimised as well:
+For example, the de facto standard for metadata format for mp3 files is called
+[ID3](https://en.wikipedia.org/wiki/ID3). This was never part of the mp3
+specification, but rather added afterwards and so in order to not break
+backwards-compatibility with old media players they added it at the end of the
+file.
 
-  * Apparently `Data.Vector.Unboxed Bool` isn't as tightly packed as they could
-    be, see `bitvec` package;
-  * Must be better way to go from bits to, say, `Word8` by e.g. by casting?
-    Probably relies on, the above point that, the bits being packed right first.
+Lets imagine we wanted to write a metadata editor for mp3 files using Erlang's
+bit syntax. I think no matter how smart the Erlang run-time is about bit syntax,
+it's hard to imagine that it wouldn't need to deserialse and serialise more data
+than necessary. Worst case it would deserialise all of the audio that leads up
+to where the metadata starts, but even if it's somehow clever and starts from
+the back then we'd still probably need to at least deserialise all fields
+preceding the field we want to update.
 
-And a couple of chores:
+Inspired by this problem and how tools like [`poke`](https://jemarch.net/poke)
+work, I've started another experiment based on `Schema`s with this use case in
+mind, here's an example session of editing the metadata of an mp3 file:
 
-  * `haddock` perhaps with `doctest`?
-  * CI
-  * Test suite
-      - Move existing tests;
-      - Add property `forall seg. segToMatch seg == bitMatch (segToPattern seg)
-        (byteString seg)`?
+```bash
+$ cabal run mp3 -- /tmp/test.mp3
 
-But the thing that really interests me is the question: how can we go beyond
-what Erlang can do and make it even easier to work with binary data?
+mp3> help
+schema | read <field> | write <field> <value> | list | q(uit)
 
-For example, the current interface makes it possible to decode binary data into
-Haskell types, which can then be manipulated, and finally encoded back to
-binary. But what if I merely want to update some binary in-place without reading
-it all in and writing it all back out?
+mp3> schema
+audio   : Binary
+header  : Magic "TAG"
+title   : ByteString (Fixed 30)
+artist  : ByteString (Fixed 30)
+album   : ByteString (Fixed 30)
+year    : ByteString (Fixed 4)
+comment : ByteString (Fixed 30)
+genre   : UInt8
 
-For example consider some on disk data structure, e.g. a B-tree. Or imagine a
-concurrent lock-free queue implemented on top of an byte array, where we want to
-atomically increment and fetch some position counter and then based on that
-write the data at the right offset into the array.
+mp3> read title
+Unknown
+
+mp3> write title "Bits and Bobs"
+
+mp3> read title
+Bits and Bobs
+
+mp3> list
+Right (Id3V1 {title = "Bits and Bobs", artist = "", album = "", year = "2023", comment = ""})
+mp3> quit
+```
+
+Basically the user needs to specify the `Schema`, which is closely mapped to the
+ID3v1 specficiation and the rest is provided by the library. The above
+interactive [editor](app/Main.hs) is completely
+[generic](src/BitsAndBobs/Editor.hs) and works for any `Schema`!
+
+#### On-disk data structures
+
+Now that we can edit files in-place on the disk it would be nice to use this in
+order to implement on-disk data structures. For example imagine we'd like to do
+some kind of logging. If our schemas could express arrays and records we could
+define our log to be an a struct with a length field and an array of records
+field that of size length. In addition to extending the schema with arrays and
+records, we'd also need atomic increments of the length field so that we can in
+a thread-safe manner allocate space in our array. B-trees would be another
+interesting on-disk data structure to implement.
+
+The generic editor would be useful for debugging and manipulating such data
+structures, but we'd probably want more tooling. For logging we probably want
+something like `cat` and `grep` but generic in `Schema`.
+
+#### Zero-copy
 
 How can we do zero-copy/zero-parse stuff? E.g. lets say we have a pre-allocated
 byte array/pointer to `Word8` buffer, we could then use
@@ -175,12 +212,76 @@ find out which type of message it is, and based on the message type we know at
 what offsets its fields are, could we then project those fields by merely
 casting (i.e. avoid parsing)?
 
+#### Backward- and forward-compatiability and migrations
+
+Another big topic is schema evolution. How can we maintain backward- and
+forward-compatibility as our software evolves? We probably want to be able to
+migrate old formats into newer ones somehow also.
+
+#### Compression
+
+Currently our schemas cannot express how to compress fields on disk, or how to
+avoid sending unnecessary data in consecutive network messages.
+
+An example of the former might be to
+
+- [deflate](https://en.wikipedia.org/wiki/Deflate)
+- dictionary
+- [rle](https://en.wikipedia.org/wiki/Run-length_encoding)
+- bit packing
+
+the latter:
+
+- delta encoding
+- dead reckoning?
+
 Another question would be if we can encode and pattern-match modulo (column)
 compression?
 
-I'm not sure if this repo is a good starting point for trying to answer these
-questions, perhaps a completely different approach is required but it helped me
-understand Erlang's approach and limitations a bit better at least.
+* Row-based vs columnar, AoS vs SoA (migrate to optimise search?)
+
+#### Pandoc for binary formats?
+
+* Humanly readable
+
+* `curl | bnb` and `bnb | curl`?
+
+* Convert from and to protobufs or avro?
+
+* Not yet another interface description language
+  [(IDL)](https://en.wikipedia.org/wiki/Interface_description_language), but
+  rather a DSL for IDLs?
+
+### Contributing
+
+The current implementation is in Haskell, but I'd really like to encourage a
+discussion beyond specific languages. For something like this to succeed I'd
+imagine we'd need libraries implemented in many languages.
+
+There's a bunch of small things that are missing from the original port of the
+Erlang's bit syntax:
+
+  * Support for more types: `Word16`, `Word64`, `Int16`, `Int32`, `Int64`,
+    `Double`, `BitString`, `Text`;
+  * Error checking, e.g. user provided size cannot be bigger than the size of
+    the type, or not enough bits to make a match;
+  * Underscore patterns;
+  * Unit type specifier;
+  * Testing the property `forall seg. segToMatch seg == bitMatch (segToPattern seg)
+    (byteString seg)`?
+
+There's a couple of things that can be optimised as well:
+
+  * Apparently `Data.Vector.Unboxed Bool` isn't as tightly packed as they could
+    be, see `bitvec` package;
+  * Must be better way to go from bits to, say, `Word8` by e.g. casting?
+    Probably relies on, the above point that, the bits being packed right first.
+
+Regarding the newer `Schema`-based approach the first thing we'd probably want
+to do is to merge it with the old approach, in particular allow bit-level sizes
+in `Schema`s while also fixing all the above mentioned things. Then, or in
+parallel, it would be nice to work out how to neatly solve all the mentioned use
+cases.
 
 If any of the above interests you, feel free to get in touch.
 
