@@ -1,9 +1,12 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module BitsAndBobs.Editor (module BitsAndBobs.Editor) where
 
 import Control.Monad
 import Data.String
+import Data.Text (Text)
+import qualified Data.Text.IO as Text
 import System.Exit
 import System.IO
 
@@ -13,31 +16,34 @@ import BitsAndBobs.Schema
 
 ------------------------------------------------------------------------
 
-data Edit a = Edit Schema
+data Edit a = Edit { editName :: Text, editSchema :: Schema }
 
 edit :: forall a. (Show a, Decode a) => Edit a -> FilePath -> IO ()
-edit (Edit schema) file = do
+edit (Edit name schema) file = do
   block <- mmapFile file
 
   b <- verifyMagic schema block
   when (not b) $ do
-    putStrLn "Failed to verify magic bytes, the file doesn't appear matches the schema."
+    Text.putStrLn "Failed to verify magic bytes, the file doesn't appear matches the schema."
     exitFailure
 
   hSetBuffering stdout NoBuffering
   go block
   where
+    help :: Text
+    help = "schema | read <field> | write <field> <value> | list | q(uit)"
+
     go block = loop
       where
         loop = do
-          putStr "mp3> "
+          Text.putStr (name <> "> ")
           l <- getLine
           case words l of
-            ["help"]   -> putStrLn "schema | read <field> | write <field> <value> | list | q(uit)" >> loop
-            ["schema"] -> putStrLn (prettySchema schema) >> loop
+            ["help"]   -> Text.putStrLn help >> loop
+            ["schema"] -> Text.putStrLn (prettySchema schema) >> loop
             ["read", field] ->
               case decodeField' schema (fromString field) block of
-                Right v -> putStrLn (prettyValue v) >> loop
+                Right v -> Text.putStrLn (prettyValue v) >> loop
                 Left err -> putStrLn ("decode error: " ++ show err) >> loop
             ["write", field, value] ->
               case readValue schema (fromString field) value of
@@ -52,4 +58,4 @@ edit (Edit schema) file = do
               loop
             ["q"]      -> exitSuccess
             ["quit"]   -> exitSuccess
-            _otherwise -> putStrLn "invalid command" >> loop
+            _otherwise -> Text.putStrLn "invalid command" >> loop

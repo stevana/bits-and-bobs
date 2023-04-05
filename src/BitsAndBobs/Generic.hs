@@ -48,10 +48,40 @@ instance (Decode1 f, Decode1 g) => Decode1 (f :*: g) where
 
 ------------------------------------------------------------------------
 
+class Encode a where
+  encode :: Schema -> a -> Block b -> IO (Either EncodeError ())
+  default encode :: (Generic a, Encode1 (Rep a)) => Schema -> a -> Block b -> IO (Either EncodeError ())
+  encode schema x block = encode1 schema (from x) block
+
+class Encode1 f where
+  encode1 :: Schema -> f p -> Block b -> IO (Either EncodeError ())
+
+instance Encode1 f => Encode1 (M1 D c f) where
+  encode1 schema (M1 x) block = encode1 schema x block
+
+instance Encode1 f => Encode1 (M1 C c f) where
+  encode1 schema (M1 x) block = encode1 schema x block
+
+instance (Selector s, Codec a) => Encode1 (M1 S s (K1 i a)) where
+  encode1 schema (M1 (K1 x)) block =
+    let
+      m :: M1 i s f a
+      m = undefined
+    in
+      encodeField schema (fromString (selName m)) block x
+
+instance (Encode1 f, Encode1 g) => Encode1 (f :*: g) where
+  encode1 schema (x :*: y) block = do
+    encode1 schema x block
+    encode1 schema y block
+
+------------------------------------------------------------------------
+
 data Example = Example { foo :: Int32, bar :: ByteString }
   deriving (Show, Generic)
 
 instance Decode Example
+instance Encode Example
 
 exampleSchemaGeneric :: Schema
 exampleSchemaGeneric = newSchema
@@ -66,3 +96,8 @@ unit_genericDecode = allocaBlock 9 $ \block -> do
   let hello = map BS.c2w "hello"
   pokeArray (ptr `plusPtr` sizeOf (4 :: Int32)) hello
   return (decode exampleSchemaGeneric block)
+
+unit_genericEncode :: IO ()
+unit_genericEncode = allocaBlock 9 $ \block -> do
+  Right () <- encode exampleSchemaGeneric (Example 4 "hello") block
+  print (decode exampleSchemaGeneric block :: Either DecodeError Example)

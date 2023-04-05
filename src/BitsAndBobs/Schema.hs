@@ -20,9 +20,13 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.String
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Foreign
 import GHC.Exts
 import GHC.Int
+import GHC.IO (IO(IO))
 import Text.Read
 
 import BitsAndBobs.Block
@@ -36,7 +40,7 @@ data Schema = Schema
   }
   deriving stock (Eq, Show)
 
-newtype Field = MkField String
+newtype Field = MkField Text
   deriving newtype (IsString, Eq, Ord, Show)
 
 data Type = Magic ByteString | Int32 | ByteString Size | UInt8 | Binary | Record Schema | Array Size Type
@@ -51,6 +55,9 @@ newSchema fts = Schema (Map.fromList fts) (map fst fts)
 lookupFieldType :: Field -> Schema -> Maybe Type
 lookupFieldType field schema = Map.lookup field (schemaTypes schema)
 
+lookupFieldType_ :: Schema -> Field -> Type
+lookupFieldType_ schema field = schemaTypes schema Map.! field
+
 schemaToList :: Schema -> [(Field, Type)]
 schemaToList schema = go [] (schemaFieldOrder schema)
   where
@@ -63,12 +70,15 @@ schemaToReverseList schema = go [] (schemaFieldOrder schema)
     go acc []               = acc
     go acc (field : fields) = go ((field, schemaTypes schema Map.! field) : acc) fields
 
-prettySchema :: Schema -> String
+prettySchema :: Schema -> Text
 prettySchema = go [] . schemaToList
   where
-    go :: [String] -> [(Field, Type)] -> String
-    go acc [] = unlines (reverse acc)
-    go acc ((MkField field, ty) : fts) = go ((field ++ " : " ++ show ty) : acc) fts
+    go :: [Text] -> [(Field, Type)] -> Text
+    go acc [] = Text.unlines (reverse acc)
+    go acc ((MkField field, ty) : fts) = go ((field <> " : " <> prettyType ty) : acc) fts
+
+prettyType :: Type -> Text
+prettyType = Text.pack . show -- XXX
 
 fieldOffset :: Schema -> Field -> Maybe Int
 fieldOffset schema field
@@ -85,6 +95,9 @@ fieldOffset schema field
       | field == field' = fmap negate ((+) <$> acc <*> sizeOfType ty)
       | otherwise       = go' ((+) <$> acc <*> sizeOfType ty) fts
 
+fieldOffset_ :: Schema -> Field -> Int
+fieldOffset_ schema = fromJust . fieldOffset schema
+
 verifyMagic :: Schema -> Block a -> IO Bool
 verifyMagic schema block = go True (Map.toList (schemaTypes schema))
   where
@@ -97,28 +110,19 @@ verifyMagic schema block = go True (Map.toList (schemaTypes schema))
         Right bs          -> go (bs == magic && acc)fts
     go acc ((_field, _type) : fts) = go acc fts
 
-data Accessor = Field Field | Index Int | Accessor :. Accessor
-
-data AccessorTypeError = TE
-
-typeCheckAccessor :: Schema -> Accessor -> Either AccessorTypeError ()
-typeCheckAccessor = undefined
-
-data OutOfBoundsError = OOB
-
-boundCheck :: Schema -> Accessor -> Maybe a -> Either OutOfBoundsError ()
-boundCheck = undefined
-
-accessorOffset :: Schema -> Accessor -> Int
-accessorOffset schema (Field field) = undefined
-
 sizeOfType :: Type -> Maybe Int
 sizeOfType (Magic bs)                        = Just (BS.length bs)
 sizeOfType UInt8                             = Just (sizeOf (1 :: Word8))
 sizeOfType Int32                             = Just (sizeOf (4 :: Int32))
 sizeOfType (ByteString (Fixed len))          = Just len
+sizeOfType (Record schema)                   = fmap sum (sequence (map sizeOfType (map snd (schemaToReverseList schema))))
+sizeOfType (Array (Fixed len) ty)            = (*) <$> pure len <*> sizeOfType ty
 sizeOfType (ByteString (Variable _lenField)) = Nothing
 sizeOfType Binary                            = Nothing
+sizeOfType ty = error (show ty)
+
+sizeOfType_ :: Type -> Int
+sizeOfType_ = fromJust . sizeOfType
 
 data DecodeError
   = WrongField Field
@@ -132,8 +136,8 @@ data DecodeError
 data Value = ByteStringV ByteString
   deriving Show
 
-prettyValue :: Value -> String
-prettyValue (ByteStringV bs) = show bs
+prettyValue :: Value -> Text
+prettyValue (ByteStringV bs) = Text.decodeUtf8Lenient bs
 
 decodeField' :: Schema -> Field -> Block a -> Either DecodeError Value
 decodeField' schema field block =
@@ -169,7 +173,14 @@ instance Codec Int32 where
             Nothing -> Left (FieldUnknownOffset field)
             Just (I# offset#) -> Right (f offset#)
         Just t     -> Left (WrongType t)
-  encodeField = undefined
+  encodeField schema field block (I32# i32) = do
+    let fieldOffset = fieldOffset_ schema field
+        offset | fieldOffset >= 0 = fieldOffset
+               | otherwise        = fromIntegral (blockLength block) + fieldOffset
+        !(Ptr addr#) = blockPtr block
+        !(I# offset#) = offset
+    liftIO $ IO $ \s ->
+      (# writeInt32OffAddr# (addr# `plusAddr#` offset#) 0# i32 s, Right () #)
 
 instance Codec ByteString where
   decodeField schema field block =
@@ -230,8 +241,6 @@ copyBytesFromBS dest bs =
   -- This is safe because we are not changing `src`.
   BS.unsafeUseAsCStringLen bs $ \(src, len) ->
     copyBytes dest (castPtr src) len
-
-fieldOffset_ schema = fromJust . fieldOffset schema
 
 (<?>) :: Monad m => Either l r -> (l -> l') -> ExceptT l' m r
 Left  l <?>  f = throwError (f l)

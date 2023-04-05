@@ -33,7 +33,7 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    [fp] -> edit (Edit id3v1Schema :: Edit Id3V1) fp
+    [fp] -> edit (Edit "mp3" id3v1Schema :: Edit Id3V1) fp
     _otherwise -> do
       putStrLn "Usage: first argument must be a filepath to an mp3 file"
       exitFailure
