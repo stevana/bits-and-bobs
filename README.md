@@ -183,9 +183,9 @@ mp3> quit
 The user needs to specify the `Schema`, which is closely mapped to the ID3v1
 specficiation and the rest is provided by the library. In particular all the
 offsets to the different fields are calculated from the schema, which allow us
-to jump straight to the field of interest without parsing. The above interactive
-[editor](app/Main.hs) is completely [generic](src/BitsAndBobs/Editor.hs) and
-works for any `Schema`!
+to jump straight to the field of interest and *reconstruct* it without parsing.
+The above interactive [editor](app/Main.hs) is completely
+[generic](src/BitsAndBobs/Editor.hs) and works for any `Schema`!
 
 #### On-disk data structures
 
@@ -254,14 +254,41 @@ of records, i.e. each log call adds a new record to the array. This is nice in
 terms of writing efficiency, but if we wanted to do a lot of grepping or some
 aggregation on some field in the record then we'd have to jump around a lot in
 the file (jumping over the other fields that we are not interested in). It could
-be more efficient to restructure our data into a record of arrays stead, where
+be more efficient to restructure our data into a record of arrays instead, where
 each array only has data from one field, that way searching or aggregating over
 that field would be much more efficient (no jumping around). Some compression is
-also a lot easier to apply on columnar data, i.e. delta and run-length encoding.
+also a lot easier to apply on columnar data, e.g. delta and run-length encoding.
 Perhaps it would make sense if the schema-based tools could do such data
 transformations in order to optimise for reads or archiving?
 
+#### Checksums
+
+If we can do encoding and decoding fields modulo compression, why not also
+handle checksums transparently?
+
+#### Protocols?
+
+Joe's [UBF](https://ubf.github.io/ubf/ubf-user-guide.en.html) and dynamic
+contract checking? Or is this out of scope?!
+
 #### Pandoc for binary formats?
+
+
+The phrase "JSON is human-readable" gets repeated often. Both
+[Joe](https://youtu.be/ieEaaofM7uU?list=PL_aCdZH3eJJVki0YqHbJtqZKSmcbXH0jP&t=28)
+[Armstrong](https://youtu.be/rQIE22e0cW8?t=2003) and [Martin
+Thompson](https://youtu.be/qDhTjE0XmkE?t=2280) have separately and on multiple
+occasions pointed out that this is a bit of a bogus statement. Human-readable at
+what level of abstraction? Clearly not at the physical disk/wire level, but also
+not at the OS level. It's only at the application level that the bytes which the
+OS returns will be decoded into the appropriate ASCII or UTF8 characters and
+displayed in a human-readable way.
+
+This raises the question: what application level tooling would we need to make
+binary human-readable?
+
+
+
 
 * Humanly readable
 
@@ -273,11 +300,31 @@ transformations in order to optimise for reads or archiving?
   ([IDL](https://en.wikipedia.org/wiki/Interface_description_language)), but
   rather a DSL for IDLs?
 
+### Discussion
+
+* Why not just use [Protobuf](https://en.wikipedia.org/wiki/Protocol_Buffers)?
+* Writing safely to disk without going via a database is almost impossible!
+  - Negate the length at the end trick?
+  - https://danluu.com/deconstruct-files/
+  - https://danluu.com/fsyncgate/
+  - https://danluu.com/file-consistency/
+  - https://puzpuzpuz.dev/the-secret-life-of-fsync
+  - Conclusion: Perhaps one day the OSes and filesystems will provide an easy to
+    use API, until then don't use this library to store anything to disk that
+    you are worried about losing.
+
+
 ### Contributing
 
 The current implementation is in Haskell, but I'd really like to encourage a
 discussion beyond specific languages. For something like this to succeed I'd
 imagine we'd need libraries implemented in many languages.
+
+
+XXX: What if the file doesn't match the schema? We verify the magic tags, but I
+guess sometimes we might want to be able to edit broken, inomplete or malformed
+files?
+
 
 There's a bunch of small things that are missing from the original port of the
 Erlang's bit syntax:
@@ -308,23 +355,24 @@ If any of the above interests you, feel free to get in touch.
 
 ### See also
 
-  * https://www.erlang.org/doc/reference_manual/expressions.html#bit_syntax;
-  * https://www.erlang.org/doc/programming_examples/bit_syntax.html;
-  * Joe Armstrong's PhD
-    [thesis](http://kth.diva-portal.org/smash/record.jsf?pid=diva2%3A9492&dswid=-1166) (2003),
-    p. 60;
-  * https://hackage.haskell.org/package/binary-bits;
-  * https://github.com/axman6/BitParser;
-  * https://github.com/squaremo/bitsyntax-js;
-  * https://capnproto.org/;
-  * GNU [poke](https://jemarch.net/poke), extensible editor for structured
-    binary data;
-  * https://github.com/wader/fq;
-  * *Designing Data-Intensive Applications* by Martin Kleppmann (chapter 3-4,
-    2017);
-  * *Development and Deployment of Multiplayer Online Games, Vol. I* by Sergey
-     Ignatchenko (pp. 200-216 and 259-285, 2017).
-
-### License
-
-See the [LICENSE](./LICENSE) file.
+* The Erlang reference manual on [bit
+  syntax](https://www.erlang.org/doc/reference_manual/expressions.html#bit_syntax);
+* Programming examples of bit syntax from the Erlang [user's
+  guide](https://www.erlang.org/doc/programming_examples/bit_syntax.html);
+* Joe Armstrong's PhD
+  [thesis](http://kth.diva-portal.org/smash/record.jsf?pid=diva2%3A9492&dswid=-1166)
+  (2003) also has a section on bit syntax on p. 60;
+* https://hackage.haskell.org/package/binary-bits;
+* https://github.com/axman6/BitParser;
+* https://github.com/squaremo/bitsyntax-js;
+* https://capnproto.org/;
+* GNU [poke](https://jemarch.net/poke), extensible editor for structured
+  binary data;
+* https://github.com/wader/fq;
+* *Designing Data-Intensive Applications* by Martin Kleppmann (chapter 3-4,
+  2017);
+* *Development and Deployment of Multiplayer Online Games, Vol. I* by Sergey
+   Ignatchenko (pp. 200-216 and 259-285, 2017);
+* Simple Binary Encoding
+  ([SBE](https://github.com/real-logic/simple-binary-encoding)) by Martin
+  Thompson et al.
