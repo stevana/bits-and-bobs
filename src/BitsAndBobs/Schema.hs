@@ -148,13 +148,13 @@ decodeField' schema field block =
 encodeField' :: Schema -> Field -> Block a -> Value -> IO (Either EncodeError ())
 encodeField' schema field block (ByteStringV bs) = encodeField schema field block bs
 
-readValue :: Schema -> Field -> String -> Either String Value
-readValue schema field string =
+readValue :: Schema -> Field -> Text -> Either String Value
+readValue schema field text =
   case lookupFieldType field schema of
     Nothing -> Left "field isn't in schema"
     Just ty ->
       case ty of
-        ByteString _ -> ByteStringV <$> readEither string
+        ByteString _ -> ByteStringV <$> readEither (Text.unpack text) -- XXX: use parser?
 
 class Codec a where
   decodeField :: Schema -> Field -> Block b -> Either DecodeError a
