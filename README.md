@@ -1,8 +1,20 @@
-# bits-and-bobs
+# Towards human-readable binary
 
-A library for working with binary data, inspired by Erlang's bit syntax.
+The phrase "JSON is human-readable" gets repeated often. Both
+[Joe](https://youtu.be/ieEaaofM7uU?list=PL_aCdZH3eJJVki0YqHbJtqZKSmcbXH0jP&t=28)
+[Armstrong](https://youtu.be/rQIE22e0cW8?t=2003) and [Martin
+Thompson](https://youtu.be/qDhTjE0XmkE?t=2280) have separately and on multiple
+occasions pointed out that this is a bit of a bogus statement. Human-readable at
+what level of abstraction? Clearly not at the physical disk/wire level, but also
+not at the OS level. It's only at the application level that the bytes which the
+OS returns will be decoded into the appropriate ASCII or UTF8 characters and
+displayed in a human-readable way.
 
-### Motivation
+This raises the question: what application level tooling would we need to make
+binary human-readable? I'd like to explore this question by means of a library
+for working with binary data, inspired by Erlang's bit syntax.
+
+### Erlang's bit syntax
 
 Erlang has a feature called bit syntax which allows the user to encode and
 decode data at the bit-level. Here's an example, where we encode three integers
@@ -266,53 +278,46 @@ transformations in order to optimise for reads or archiving?
 If we can do encoding and decoding fields modulo compression, why not also
 handle checksums transparently?
 
-#### Protocols?
+#### Protocols
 
-Joe's [UBF](https://ubf.github.io/ubf/ubf-user-guide.en.html) and dynamic
-contract checking? Or is this out of scope?!
+So far we've looked at how to specify what data our programs use and how it's
+encoded on disk or over the wire. Another important aspect is what protocol is
+followed when said data is sent between components in the system.
 
-#### Pandoc for binary formats?
+For example consider some client-server application where our schema describes
+the request and responses:
 
+```mermaid
+flowchart LR
+    Client -- request --> Server
+    Server -- response --> Client
+```
 
-The phrase "JSON is human-readable" gets repeated often. Both
-[Joe](https://youtu.be/ieEaaofM7uU?list=PL_aCdZH3eJJVki0YqHbJtqZKSmcbXH0jP&t=28)
-[Armstrong](https://youtu.be/rQIE22e0cW8?t=2003) and [Martin
-Thompson](https://youtu.be/qDhTjE0XmkE?t=2280) have separately and on multiple
-occasions pointed out that this is a bit of a bogus statement. Human-readable at
-what level of abstraction? Clearly not at the physical disk/wire level, but also
-not at the OS level. It's only at the application level that the bytes which the
-OS returns will be decoded into the appropriate ASCII or UTF8 characters and
-displayed in a human-readable way.
+The schema doesn't say anything about in which order requests are legal. For
+example, we might want to always requrie a login-like request at the start of a
+session. Or let's say we are describing a POSIX-like filesystem API, then
+`read`s and `write`s must only be made on `open` (and not yet `close`d) file
+descriptors.
 
-This raises the question: what application level tooling would we need to make
-binary human-readable?
-
-
-
-
-* Humanly readable
-
-* `curl | bnb` and `bnb | curl`?
-
-* Convert from and to protobufs or avro?
-
-* Not yet another interface description language
-  ([IDL](https://en.wikipedia.org/wiki/Interface_description_language)), but
-  rather a DSL for IDLs?
+Joe Armstrong wrote a paper called [*Getting Erlang to talk to the outside
+world*](https://erlang.org/workshop/2002/Armstrong.pdf) (2002) which discusses
+this problem. He proposed a language for describing protocols and a dynamic
+sessions type checker, it never seemed to have got much traction though even
+though he gave several [talks](https://youtu.be/ed7A7r6DBsM?t=1071) about it.
+One implementation can be found
+[here](https://ubf.github.io/ubf/ubf-user-guide.en.html).
 
 ### Discussion
 
-* Why not just use [Protobuf](https://en.wikipedia.org/wiki/Protocol_Buffers)?
-* Writing safely to disk without going via a database is almost impossible!
-  - Negate the length at the end trick?
-  - https://danluu.com/deconstruct-files/
-  - https://danluu.com/fsyncgate/
-  - https://danluu.com/file-consistency/
-  - https://puzpuzpuz.dev/the-secret-life-of-fsync
-  - Conclusion: Perhaps one day the OSes and filesystems will provide an easy to
-    use API, until then don't use this library to store anything to disk that
-    you are worried about losing.
-
+* Q: Why not just use [Protobuf](https://en.wikipedia.org/wiki/Protocol_Buffers)?
+  A: Except for backward- and forward-compatibility, I don't think Protobufs can
+     handle any of the above listed use cases. Also the way it handles
+     compatibility with it's numbered fields is quite ugly[^1].
+* Q: Writing safely to disk without going via a database is almost impossible!?
+  A: Dan Luu has [written](https://danluu.com/deconstruct-files/) about
+  [this](https://danluu.com/fsyncgate/) on several
+  [occasions](https://danluu.com/file-consistency/). Short answer: yes, don't
+  store anything you are worried about losing using this library.
 
 ### Contributing
 
@@ -322,7 +327,7 @@ imagine we'd need libraries implemented in many languages.
 
 
 XXX: What if the file doesn't match the schema? We verify the magic tags, but I
-guess sometimes we might want to be able to edit broken, inomplete or malformed
+guess sometimes we might want to be able to edit broken, incomplete or malformed
 files?
 
 
@@ -362,17 +367,22 @@ If any of the above interests you, feel free to get in touch.
 * Joe Armstrong's PhD
   [thesis](http://kth.diva-portal.org/smash/record.jsf?pid=diva2%3A9492&dswid=-1166)
   (2003) also has a section on bit syntax on p. 60;
-* https://hackage.haskell.org/package/binary-bits;
-* https://github.com/axman6/BitParser;
-* https://github.com/squaremo/bitsyntax-js;
-* https://capnproto.org/;
+* [Native Code Compilation of Erlang's Bit
+  Syntax](https://erlang.org/workshop/2002/Gustafsson.pdf) (2002);
+* [Cap’n Proto](https://capnproto.org/);
+* Simple Binary Encoding
+  ([SBE](https://github.com/real-logic/simple-binary-encoding)) by Martin
+  Thompson et al;
 * GNU [poke](https://jemarch.net/poke), extensible editor for structured
   binary data;
-* https://github.com/wader/fq;
+* [jq for binary formats](https://github.com/wader/fq);
+* [Terminal JSON viewer](https://github.com/antonmedv/fx);
 * *Designing Data-Intensive Applications* by Martin Kleppmann (chapter 3-4,
   2017);
 * *Development and Deployment of Multiplayer Online Games, Vol. I* by Sergey
-   Ignatchenko (pp. 200-216 and 259-285, 2017);
-* Simple Binary Encoding
-  ([SBE](https://github.com/real-logic/simple-binary-encoding)) by Martin
-  Thompson et al.
+   Ignatchenko (pp. 200-216 and 259-285, 2017).
+
+
+
+[^1]: Avro has a nicer story for
+    [compatibility](https://avro.apache.org/docs/1.11.1/specification/#schema-resolution).
