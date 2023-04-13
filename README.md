@@ -1,4 +1,4 @@
-# Towards human-readable binary
+# Can we make binary "human-readable"?
 
 The phrase "JSON is human-readable" gets repeated often. Both
 [Joe](https://youtu.be/ieEaaofM7uU?list=PL_aCdZH3eJJVki0YqHbJtqZKSmcbXH0jP&t=28)
@@ -199,6 +199,8 @@ to jump straight to the field of interest and *reconstruct* it without parsing.
 The above interactive [editor](app/Main.hs) is completely
 [generic](src/BitsAndBobs/Editor.hs) and works for any `Schema`!
 
+XXX: diffs? https://youtu.be/MUb8rD5mPvE?list=PLTj8twuHdQz-JcX7k6eOwyVPDB8CyfZc8&t=830
+
 #### On-disk data structures
 
 Now that we can edit files in-place on the disk it would be nice to use this in
@@ -276,13 +278,26 @@ transformations in order to optimise for reads or archiving?
 #### Checksums
 
 If we can do encoding and decoding fields modulo compression, why not also
-handle checksums transparently?
+handle checksums transparently? When we update a field which is part of a
+checksum, we'd probably want to check the checksum beforehand and recompute it
+afterwards.
+
+#### Validation
+
+What if some input bytes don't match the schema? Currently all magic tags in a
+schema get verified, but sometimes we might want to be able to edit incomplete
+or malformed inputs.
+
+Can we add refinements to the schema which allow us to express things like,
+integer between 18 and 150 or bytestring containing only alphanumeric
+characters, etc?
 
 #### Protocols
 
 So far we've looked at how to specify what data our programs use and how it's
-encoded on disk or over the wire. Another important aspect is what protocol is
-followed when said data is sent between components in the system.
+transformed to and from bytes on disk or over the network. Another important
+aspect is what protocol is followed when said data is sent between components in
+the system.
 
 For example consider some client-server application where our schema describes
 the request and responses:
@@ -310,53 +325,37 @@ One implementation can be found
 ### Discussion
 
 * Q: Why not just use [Protobuf](https://en.wikipedia.org/wiki/Protocol_Buffers)?
+
   A: Except for backward- and forward-compatibility, I don't think Protobufs can
      handle any of the above listed use cases. Also the way it handles
-     compatibility with it's numbered fields is quite ugly[^1].
+     compatibility with it's numbered and optional fields is quite ugly[^1].
 * Q: Writing safely to disk without going via a database is almost impossible!?
+
   A: Dan Luu has [written](https://danluu.com/deconstruct-files/) about
   [this](https://danluu.com/fsyncgate/) on several
-  [occasions](https://danluu.com/file-consistency/). Short answer: yes, don't
-  store anything you are worried about losing using this library.
+  [occasions](https://danluu.com/file-consistency/). Short answer: don't store
+  anything you are worried about losing using this library. Longer answer: I'd
+  like to revisit this topic from the point of view of testing at some later
+  point in time. In particular I'm interested in how we can make the results
+  from the paper [*All File Systems Are Not Created Equal: On the Complexity of
+  Crafting Crash-Consistent
+  Applications*](https://www.usenix.org/conference/osdi14/technical-sessions/presentation/pillai)
+  (2014) more accessible, especially their tool [*ALICE: Application-Level
+  Intelligent Crash Explorer*](https://github.com/madthanu/alice).
 
 ### Contributing
 
 The current implementation is in Haskell, but I'd really like to encourage a
-discussion beyond specific languages. For something like this to succeed I'd
-imagine we'd need libraries implemented in many languages.
+discussion beyond specific languages. In order to make binary "human-readable"
+we need solutions that are universal.
 
+* Do you have use cases that are not listed above?
+* Do you know of tools, libraries or solutions any of the above use cases that
+  have already not been discussed or are not listed below in the "see also"
+  section?
+* Interested in porting any of these ideas to your favorite language?
 
-XXX: What if the file doesn't match the schema? We verify the magic tags, but I
-guess sometimes we might want to be able to edit broken, incomplete or malformed
-files?
-
-
-There's a bunch of small things that are missing from the original port of the
-Erlang's bit syntax:
-
-  * Support for more types: `Word16`, `Word64`, `Int16`, `Int32`, `Int64`,
-    `Double`, `BitString`, `Text`;
-  * Error checking, e.g. user provided size cannot be bigger than the size of
-    the type, or not enough bits to make a match;
-  * Underscore patterns;
-  * Unit type specifier;
-  * Testing the property `forall seg. segToMatch seg == bitMatch (segToPattern seg)
-    (byteString seg)`?
-
-There's a couple of things that can be optimised as well:
-
-  * Apparently `Data.Vector.Unboxed Bool` isn't as tightly packed as they could
-    be, see `bitvec` package;
-  * Must be better way to go from bits to, say, `Word8` by e.g. casting?
-    Probably relies on, the above point that, the bits being packed right first.
-
-Regarding the newer `Schema`-based approach the first thing we'd probably want
-to do is to merge it with the old approach, in particular allow bit-level sizes
-in `Schema`s while also fixing all the above mentioned things. Then, or in
-parallel, it would be nice to work out how to neatly solve all the mentioned use
-cases.
-
-If any of the above interests you, feel free to get in touch.
+If so, feel free to get in touch!
 
 ### See also
 
@@ -375,7 +374,9 @@ If any of the above interests you, feel free to get in touch.
   Thompson et al;
 * GNU [poke](https://jemarch.net/poke), extensible editor for structured
   binary data;
-* [jq for binary formats](https://github.com/wader/fq);
+* [fq: jq for binary formats](https://github.com/wader/fq) also described in
+  this
+  [talk](https://www.youtube.com/watch?v=GJOq_b0eb-s&list=PLTj8twuHdQz-JcX7k6eOwyVPDB8CyfZc8&index=1);
 * [Terminal JSON viewer](https://github.com/antonmedv/fx);
 * *Designing Data-Intensive Applications* by Martin Kleppmann (chapter 3-4,
   2017);
