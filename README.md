@@ -1,20 +1,58 @@
 # Can we make binary "human-readable"?
 
-The phrase "JSON is human-readable" gets repeated often. Both
+JSON is probably the most commonly used format for serialising data today. A
+frequent argument for using it is that JSON is human-readable.
+
+What does that mean exactly? I suppose that people usually mean two things when
+they say that. First, it's less verbose than XML, making it easier to read. Most
+people would probably still call XML human-readable, but arguebly less so than
+JSON. Second, it's easier to read than binary encodings produced by, for
+example, MessagePack, ASN.1 or Protobuf. For example, the JSON string `"foo"` is
+represented by the following byte sequence in MessagePack:
+
+```
+    a3 66 6f 6f
+    ^  ^  ^  ^
+    |  |  |  |
+    |  |  +--+--------------------------------- The character 'o'
+    |  |
+    |  +-------------------- The character 'f'
+    |
+    +--- String of length 3
+```
+
+If we were to open a file with the above bytes or echo them to the terminal we'd
+see `úfoo`, which while one character shorter[^1] than the JSON string is borderline
+unreadable (and will be worse once the JSON object is more complicated).
+
+At the end of the day, even with plain JSON, we serialise into bytes though. If
+we `hexdump` a file containing the JSON string `"foo"` we see the byte sequence
+`22 66 6f 6f 22` where `22` is hex for the double quote character. So arguably
+JSON is only human-readable because our editors and standard terminal utilities
+display bytes as ASCII or UTF-8.
+
+This isn't a new argument, of course. People like
 [Joe](https://youtu.be/ieEaaofM7uU?list=PL_aCdZH3eJJVki0YqHbJtqZKSmcbXH0jP&t=28)
 [Armstrong](https://youtu.be/rQIE22e0cW8?t=2003) and [Martin
 Thompson](https://youtu.be/qDhTjE0XmkE?t=2280) have separately and on multiple
-occasions pointed out that this is a bit of a bogus statement. Human-readable at
-what level of abstraction? Clearly not at the physical disk/wire level, but also
-not at the OS level. It's only at the application level that the bytes which the
-OS returns will be decoded into the appropriate ASCII or UTF8 characters and
-displayed in a human-readable way.
+occasions pointed this out. Both stress that we are wasting massive amounts of
+CPU cycles on parsing JSON.
 
-This raises the question: what application level tooling would we need to make
-binary human-readable? I'd like to explore this question by means of a library
-for working with binary data, inspired by Erlang's bit syntax.
+It's not just that it's less space efficient, as we saw with `"foo"` vs `úfoo`,
+it's also because with JSON we need to inspect every single character after the
+first `"` in order to determine when the string ends. Whereas in, for example,
+the MessagePack case the length of the string is encoded in the `ú` so we can
+jump forward and just copy the three bytes (without looking at them). Joe
+calls this *reconstructing* as opposed to parsing.
 
-### Erlang's bit syntax
+So if JSON is merely human-readable because of our application-level tooling,
+this raises the question: what would it take to make binary encodings
+"human-readable"?
+
+I'd like spend the rest of this post exploring this question by means of writing
+a library for working with binary data, inspired by Erlang's bit syntax.
+
+## Erlang's bit syntax
 
 Erlang has a feature called bit syntax which allows the user to encode and
 decode data at the bit-level. Here's an example, where we encode three integers
@@ -82,10 +120,10 @@ DgramSize = ​byte_size​(Dgram),
 Note how we can match on the header length, `HLen`, and later use the value of
 that match as the size when pattern matching on later values.
 
-### Usage
+## Usage
 
-This library lets you do similar things to Erlang's bit syntax, but in a more
-clunky way.
+We can implement a library that lets us do similar things to Erlang's bit
+syntax, but in a more clunky way (it's difficult to beat native syntax support).
 
 ```haskell
 import BitsAndBobs
@@ -103,7 +141,12 @@ bitMatch pattern1 bytestring1
   -- => (5,("hello",(", rest",())))
 ```
 
-### How it works
+The above is
+[implemented](https://github.com/stevana/bits-and-bobs/blob/main/src/BitsAndBobs.hs)
+in Haskell, but should be straightforward to port to most languages using the
+following recipe.
+
+## How it works
 
 The high-level idea when encoding a bunch of, possibly sized, values into a
 `ByteString` is as follows:
@@ -128,9 +171,9 @@ For decoding or pattern-matching a, possibly sized, pattern against a
 `Float` and `Double`s get converted into `Word32` and `Word64` respectively
 before converted into bits, and `Int`egers are encoding using
 [zigzag](https://en.wikipedia.org/wiki/Variable-length_quantity#Zigzag_encoding)
-encoding.
+encoding[^2].
 
-### Extending Erlang's bit syntax
+## Extending Erlang's bit syntax
 
 Erlang's bit syntax makes it possible to decode binary data into the host
 languague's types, which can then be manipulated, and finally encoded back to
@@ -140,7 +183,7 @@ While already useful, it doesn't cover some interesting use cases. Let me try to
 explain the use cases and at the same time sketch possible ways we can extend
 Erlang's bit syntax to cover those.
 
-#### In-place updates
+### In-place updates
 
 What if we merely want to update some binary in-place without reading it all in
 and writing it all back out?
@@ -194,14 +237,16 @@ mp3> quit
 
 The user needs to specify the `Schema`, which is closely mapped to the ID3v1
 specficiation and the rest is provided by the library. In particular all the
-offsets to the different fields are calculated from the schema, which allow us
+offsets to the different fields are calculated from the schema[^3], which allow us
 to jump straight to the field of interest and *reconstruct* it without parsing.
 The above interactive [editor](app/Main.hs) is completely
 [generic](src/BitsAndBobs/Editor.hs) and works for any `Schema`!
 
-XXX: diffs? https://youtu.be/MUb8rD5mPvE?list=PLTj8twuHdQz-JcX7k6eOwyVPDB8CyfZc8&t=830
+If we can read and update fields, it should also be possible to get
+[diffs](https://youtu.be/MUb8rD5mPvE?list=PLTj8twuHdQz-JcX7k6eOwyVPDB8CyfZc8&t=830)
+and patches for cheap.
 
-#### On-disk data structures
+### On-disk data structures
 
 Now that we can edit files in-place on the disk it would be nice to use this in
 order to implement on-disk data structures. For example imagine we'd like to do
@@ -209,14 +254,16 @@ some kind of logging. If our schemas could express arrays and records we could
 define our log to be an a struct with a length field and an array of records
 field that of size length. In addition to extending the schema with arrays and
 records, we'd also need atomic increments of the length field so that we can in
-a thread-safe manner allocate space in our array. B-trees would be another
-interesting on-disk data structure to implement.
+a thread-safe manner allocate space in our array. B-trees or
+[Aeron's](https://github.com/real-logic/aeron) [log
+buffers](https://aeroncookbook.com/aeron/log-buffers-images/) would be other
+interesting on-disk data structures to implement.
 
 The generic editor would be useful for debugging and manipulating such data
 structures, but we'd probably want more tooling. For logging we probably want
 something like `cat` and `grep` but generic in `Schema`.
 
-#### Zero-copy
+### Zero-copy
 
 When we `read` a `ByteString` field in the mp3 metadata example above, we copied
 the bytes from the underlying file. Sometimes we might want to avoid doing that.
@@ -234,13 +281,13 @@ to be able to decode the payload field as a pointer/slice of the buffer which we
 pass to [`write`](https://linux.die.net/man/2/write) (thus avoiding copying aka
 "zero-copy").
 
-#### Backward- and forward-compatiability and migrations
+### Backward- and forward-compatiability and migrations
 
 Another big topic is schema evolution. How can we maintain backward- and
 forward-compatibility as our software evolves? We probably want to be able to
 migrate old formats into newer ones somehow also.
 
-#### Compression
+### Compression
 
 Currently our schemas cannot express how to compress fields on disk, or how to
 avoid sending unnecessary data in consecutive network messages.
@@ -275,14 +322,14 @@ also a lot easier to apply on columnar data, e.g. delta and run-length encoding.
 Perhaps it would make sense if the schema-based tools could do such data
 transformations in order to optimise for reads or archiving?
 
-#### Checksums
+### Checksums
 
 If we can do encoding and decoding fields modulo compression, why not also
 handle checksums transparently? When we update a field which is part of a
 checksum, we'd probably want to check the checksum beforehand and recompute it
 afterwards.
 
-#### Validation
+### Validation
 
 What if some input bytes don't match the schema? Currently all magic tags in a
 schema get verified, but sometimes we might want to be able to edit incomplete
@@ -292,7 +339,7 @@ Can we add refinements to the schema which allow us to express things like,
 integer between 18 and 150 or bytestring containing only alphanumeric
 characters, etc?
 
-#### Protocols
+### Protocols
 
 So far we've looked at how to specify what data our programs use and how it's
 transformed to and from bytes on disk or over the network. Another important
@@ -322,13 +369,13 @@ though he gave several [talks](https://youtu.be/ed7A7r6DBsM?t=1071) about it.
 One implementation can be found
 [here](https://ubf.github.io/ubf/ubf-user-guide.en.html).
 
-### Discussion
+## Discussion
 
 * Q: Why not just use [Protobuf](https://en.wikipedia.org/wiki/Protocol_Buffers)?
 
   A: Except for backward- and forward-compatibility, I don't think Protobufs can
      handle any of the above listed use cases. Also the way it handles
-     compatibility with it's numbered and optional fields is quite ugly[^1].
+     compatibility with it's numbered and optional fields is quite ugly[^4].
 * Q: Writing safely to disk without going via a database is almost impossible!?
 
   A: Dan Luu has [written](https://danluu.com/deconstruct-files/) about
@@ -343,7 +390,7 @@ One implementation can be found
   (2014) more accessible, especially their tool [*ALICE: Application-Level
   Intelligent Crash Explorer*](https://github.com/madthanu/alice).
 
-### Contributing
+## Contributing
 
 The current implementation is in Haskell, but I'd really like to encourage a
 discussion beyond specific languages. In order to make binary "human-readable"
@@ -353,11 +400,13 @@ we need solutions that are universal.
 * Do you know of tools, libraries or solutions any of the above use cases that
   have already not been discussed or are not listed below in the "see also"
   section?
+* Do you know if some use cases impossible in general or incompatible with each
+  other?
 * Interested in porting any of these ideas to your favorite language?
 
 If so, feel free to get in touch!
 
-### See also
+## See also
 
 * The Erlang reference manual on [bit
   syntax](https://www.erlang.org/doc/reference_manual/expressions.html#bit_syntax);
@@ -383,7 +432,15 @@ If so, feel free to get in touch!
 * *Development and Deployment of Multiplayer Online Games, Vol. I* by Sergey
    Ignatchenko (pp. 200-216 and 259-285, 2017).
 
+[^1]: The savings are greater for more complicated JSON objects, especially
+    considering JSON doesn't support binary data which needs to be either
+    escaped or base64 encoded before used as a string.
 
-
-[^1]: Avro has a nicer story for
+[^2]: I don't think Erlang uses zig-zag encoding of integers, in fact I'm not
+    sure what it does with them.
+[^3]: The library tries to calculate the offset of a field from the start of the
+    file, in this case the beginning of the file contains an audio binary "field"
+    of unknown length, so it fails and retries calculating the offset from the
+    end of the file instead.
+[^4]: Avro has a nicer story for
     [compatibility](https://avro.apache.org/docs/1.11.1/specification/#schema-resolution).
