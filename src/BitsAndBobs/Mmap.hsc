@@ -90,8 +90,8 @@ msync addr len syncFlag invalidate = throwErrnoIfMinus1_ "msync" (c_msync addr l
   where
     flags = syncFlag .|. if invalidate then mS_INVALIDATE else 0
 
-posixMemalignFPtr :: Int -> Int -> IO (ForeignPtr a)
-posixMemalignFPtr align size = do
+posixMemalign :: Int -> Int -> IO (ForeignPtr a)
+posixMemalign align size = do
   memPtr <- malloc
   throwErrnoIfMinus1_ "posix_memalign"
     (c_posix_memalign memPtr (fromIntegral align) (fromIntegral size))
@@ -103,25 +103,5 @@ posixMemalignFPtr align size = do
       free memPtr
       free ptr
 
-posixMemalign :: Int -> Int -> IO (Ptr a)
-posixMemalign align size = do
-  memPtr <- malloc
-  throwErrnoIfMinus1_ "posix_memalign"
-    (c_posix_memalign memPtr (fromIntegral align) (fromIntegral size))
-  peek memPtr
-
 sysconfPageSize :: IO Int
 sysconfPageSize = fromIntegral <$> c_sysconf _SC_PAGE_SIZE
-
-------------------------------------------------------------------------
-
-main :: IO ()
-main = do
-  fptr <- posixMemalignFPtr 4096 4096
-  withForeignPtr fptr $ \ptr' -> do
-    ptr <- mmap (Just ptr') 16 (pROT_READ .|. pROT_WRITE) mAP_SHARED Nothing 0
-    if ptr /= ptr'
-    then error "not same ptr"
-    else do
-      msync ptr 16 mS_SYNC False
-      munmap ptr 16

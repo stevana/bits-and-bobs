@@ -11,7 +11,7 @@ import System.Exit
 import System.IO
 
 import BitsAndBobs.Editor
-import BitsAndBobs.Generic
+import BitsAndBobs.Codec
 import BitsAndBobs.Schema
 
 ------------------------------------------------------------------------

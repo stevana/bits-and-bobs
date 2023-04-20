@@ -27,7 +27,6 @@ import Foreign
 import GHC.Exts
 import GHC.Int
 import GHC.IO (IO(IO))
-import Text.Read
 
 import BitsAndBobs.Block
 
@@ -98,18 +97,6 @@ fieldOffset schema field
 fieldOffset_ :: Schema -> Field -> Int
 fieldOffset_ schema = fromJust . fieldOffset schema
 
-verifyMagic :: Schema -> Block a -> IO Bool
-verifyMagic schema block = go True (Map.toList (schemaTypes schema))
-  where
-    go False _                          = return False
-    go _acc []                          = return True
-    go acc ((field, Magic magic) : fts) = do
-      let eBs = decodeField schema field block
-      case eBs of
-        Left _decodeError -> return False
-        Right bs          -> go (bs == magic && acc)fts
-    go acc ((_field, _type) : fts) = go acc fts
-
 sizeOfType :: Type -> Maybe Int
 sizeOfType (Magic bs)                        = Just (BS.length bs)
 sizeOfType UInt8                             = Just (sizeOf (1 :: Word8))
@@ -124,160 +111,11 @@ sizeOfType ty = error (show ty)
 sizeOfType_ :: Type -> Int
 sizeOfType_ = fromJust . sizeOfType
 
-data DecodeError
-  = WrongField Field
-  | WrongType Type
-  | WrongLengthType Type
-  | WrongLengthField Field
-  | FieldUnknownOffset Field
-  | LengthFieldUnknownOffset Field
-  deriving stock (Eq, Show)
-
-data Value = ByteStringV ByteString
-  deriving Show
-
-prettyValue :: Value -> Text
-prettyValue (ByteStringV bs) = Text.decodeUtf8Lenient bs
-
-decodeField' :: Schema -> Field -> Block a -> Either DecodeError Value
-decodeField' schema field block =
-  case lookupFieldType field schema of
-    Nothing -> Left undefined
-    Just (ByteString _) -> ByteStringV <$> decodeField schema field block
-
-encodeField' :: Schema -> Field -> Block a -> Value -> IO (Either EncodeError ())
-encodeField' schema field block (ByteStringV bs) = encodeField schema field block bs
-
-readValue :: Schema -> Field -> Text -> Either String Value
-readValue schema field text =
-  case lookupFieldType field schema of
-    Nothing -> Left "field isn't in schema"
-    Just ty ->
-      case ty of
-        ByteString _ -> ByteStringV <$> readEither (Text.unpack text) -- XXX: use parser?
-
-class Codec a where
-  decodeField :: Schema -> Field -> Block b -> Either DecodeError a
-  encodeField :: Schema -> Field -> Block b -> a -> IO (Either EncodeError ())
-
-instance Codec Int32 where
-  decodeField schema field block =
-    helper (\offset# -> I32# (indexInt32OffAddr# (addr# `plusAddr#` offset#) 0#)) -- XXX: negative offset = read from back of file
-    where
-    !(Ptr addr#) = blockPtr block
-    helper f =
-      case lookupFieldType field schema of
-        Nothing    -> Left (WrongField field)
-        Just Int32 ->
-          case fieldOffset schema field of
-            Nothing -> Left (FieldUnknownOffset field)
-            Just (I# offset#) -> Right (f offset#)
-        Just t     -> Left (WrongType t)
-  encodeField schema field block (I32# i32) = do
-    let fieldOffset = fieldOffset_ schema field
-        offset | fieldOffset >= 0 = fieldOffset
-               | otherwise        = fromIntegral (blockLength block) + fieldOffset
-        !(Ptr addr#) = blockPtr block
-        !(I# offset#) = offset
-    liftIO $ IO $ \s ->
-      (# writeInt32OffAddr# (addr# `plusAddr#` offset#) 0# i32 s, Right () #)
-
-instance Codec ByteString where
-  decodeField schema field block =
-    case lookupFieldType field schema of
-      Nothing -> Left (WrongField field)
-      Just (Magic magic) ->
-        let len = BS.length magic in
-        case fieldOffset schema field of
-          Nothing -> undefined
-          Just offset@(I# offset#) | offset >= 0 ->
-            Right (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` offset#)) len))
-                                   | otherwise -> do
-            let blockLen# = case fromIntegral (blockLength block) of
-                              I# len# -> len#
-            Right (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` blockLen# `plusAddr#` offset#)) len))
-
-      Just (ByteString (Fixed len)) ->
-        case fieldOffset schema field of
-          Nothing -> undefined
-          Just offset@(I# offset#) | offset >= 0 ->
-            Right (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` offset#)) len))
-                                   | otherwise -> do
-            let blockLen# = case fromIntegral (blockLength block) of
-                              I# len# -> len#
-            Right (BS8.takeWhile (/= '\NUL')
-                   (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` blockLen# `plusAddr#` offset#)) len)))
-
-      Just (ByteString (Variable lengthField)) ->
-        case lookupFieldType lengthField schema of
-          Nothing -> Left (WrongLengthField lengthField)
-          Just Int32 ->
-            case fieldOffset schema lengthField of
-              Nothing -> Left (LengthFieldUnknownOffset lengthField)
-              Just offset@(I# offset#) | offset >= 0 -> do
-                let lengthAddr# = addr# `plusAddr#` offset#
-                    len = fromIntegral (I32# (indexInt32OffAddr# lengthAddr# 0#))
-                Right (BS.unsafeCreate len (\ptr -> copyBytes ptr (Ptr (addr# `plusAddr#` 4#)) len))
-                                           | otherwise -> do
-                let blockLen = blockLength block
-                undefined
-
-          Just t -> Left (WrongLengthType t)
-      Just t -> Left (WrongType t)
-    where
-    !(Ptr addr#) = blockPtr block
-  encodeField schema field block bs = runExceptT $ do
-    let ty = ByteString (Fixed (BS.length bs))
-    () <- typeCheckField schema field ty         <?> EncodeTypeError
-    () <- boundCheckField schema field (Just ty) <?> OutOfBoundsError
-    let fieldOffset = fieldOffset_ schema field
-        -- XXX: move into fieldOffset?
-        offset | fieldOffset >= 0 = fieldOffset
-               | otherwise        = fromIntegral (blockLength block) + fieldOffset
-    liftIO (copyBytesFromBS (blockPtr block `plusPtr` offset) bs)
-
-copyBytesFromBS :: Ptr a -> ByteString -> IO ()
-copyBytesFromBS dest bs =
-  -- This is safe because we are not changing `src`.
-  BS.unsafeUseAsCStringLen bs $ \(src, len) ->
-    copyBytes dest (castPtr src) len
-
-(<?>) :: Monad m => Either l r -> (l -> l') -> ExceptT l' m r
-Left  l <?>  f = throwError (f l)
-Right r <?> _f = return r
-
 data EncodeError = EncodeTypeError FieldTypeError | OutOfBoundsError FieldOutOfBoundsError
   deriving stock Show
 
 data FieldTypeError = FTE
   deriving stock Show
 
-typeCheckField :: Schema -> Field -> Type -> Either FieldTypeError ()
-typeCheckField _ _ _ = return ()
-
 data FieldOutOfBoundsError = FOOB
   deriving stock Show
-
-boundCheckField :: Schema -> Field -> Maybe Type -> Either FieldOutOfBoundsError ()
-boundCheckField _ _ _= return ()
-
-exampleSchema :: Schema
-exampleSchema = newSchema [("length", Int32), ("string", ByteString (Variable "length"))]
-
-unit_decodeInt32 :: IO ()
-unit_decodeInt32 = allocaBytes 4 $ \ptr -> do
-  let i :: Int32
-      i = 1234
-  poke ptr i
-  let j = decodeField exampleSchema "length" (Block ptr 4)
-  assert (j == Right i) (return ())
-
-unit_decodeBS :: IO ()
-unit_decodeBS = allocaBytes (sizeOf (4 :: Int32) + length ("hello" :: String)) $ \ptr -> do
-  let len :: Int32
-      len = 5
-  poke ptr len
-  let hello = map BS.c2w "hello"
-  pokeArray (ptr `plusPtr` sizeOf (4 :: Int32)) hello
-  let bs = decodeField exampleSchema "string" (Block ptr 9)
-  assert (bs == Right (BS.pack hello)) (return ())
