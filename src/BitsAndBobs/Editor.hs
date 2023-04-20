@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 
 module BitsAndBobs.Editor (module BitsAndBobs.Editor) where
 
@@ -11,7 +12,7 @@ import System.Exit
 import System.IO
 
 import BitsAndBobs.Block
-import BitsAndBobs.Generic
+import BitsAndBobs.Codec
 import BitsAndBobs.Schema
 
 ------------------------------------------------------------------------

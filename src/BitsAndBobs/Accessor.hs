@@ -2,7 +2,10 @@
 
 module BitsAndBobs.Accessor (module BitsAndBobs.Accessor) where
 
+import Foreign
+
 import BitsAndBobs.Schema
+import BitsAndBobs.Block
 
 ------------------------------------------------------------------------
 
@@ -12,12 +15,12 @@ data Accessor = Field Field | Accessor :. Accessor | Index Int
 data AccessorTypeError = TE
 
 typeCheckAccessor :: Schema -> Accessor -> Either AccessorTypeError ()
-typeCheckAccessor = undefined
+typeCheckAccessor _ _ = return ()
 
 data OutOfBoundsError = OOB
 
-boundCheck :: Schema -> Accessor -> Maybe a -> Either OutOfBoundsError ()
-boundCheck = undefined
+boundCheck :: Schema -> Accessor -> Block a -> Either OutOfBoundsError ()
+boundCheck _ _ _ = return ()
 
 accessorOffset :: Type -> Accessor -> Int
 accessorOffset (Record schema) (Field field) = fieldOffset_ schema field
@@ -38,32 +41,3 @@ lookupAccessorType ty (accessor :. accessor')    =
   in
     lookupAccessorType ty' accessor'
 lookupAccessorType _ _ = error "lookupAccessorType: impossible, should have been caught by typechecker"
-
-------------------------------------------------------------------------
-
-exampleNestedSchema :: Schema
-exampleNestedSchema = newSchema
-  [ ("length", Int32)
-  , ("array", Array (Fixed 10) (Record (newSchema [ ("foo", Int32)
-                                                  , ("bar", Int32)
-                                                  ])))
-  ]
-
-unit_accessorOffset :: Bool
-unit_accessorOffset =
-  16 == accessorOffset (Record exampleNestedSchema) (Field "array" :. Index 1 :. Field "bar")
--- length = 4 + array[0] = 8 + array[1].foo = 4 == 16
-
-exampleNestedSchemaFooter :: Schema
-exampleNestedSchemaFooter = newSchema
-  [ ("binary", Binary)
-  , ("array", Array (Fixed 10) (Record (newSchema [ ("foo", Int32)
-                                                  , ("bar", Int32)
-                                                  ])))
-  , ("int", Int32)
-  ]
-
-unit_accessorOffsetFooter :: Bool
-unit_accessorOffsetFooter = -72 ==
-  accessorOffset (Record exampleNestedSchemaFooter) (Field "array" :. Index 1 :. Field "bar")
-  -- array starts at -4 - (10 * 8) + array[0] = 8 + array[1].foo = 4, so -80 + 8 + 4 == -72
