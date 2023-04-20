@@ -1,47 +1,49 @@
-# Can we make binary "human-readable"?
+# Towards human-readable binary encodings
+
+Can we make binary encodings human-readable? This post explores this question by
+means of implementing a library inspired by Erlang's bit syntax.
+
+## Motivation
 
 JSON is probably the most commonly used format for serialising data today. A
 frequent argument for using it is that JSON is human-readable.
 
-What does that mean exactly? I suppose that people usually mean two things when
-they say that. First, it's less verbose than XML, making it easier to read. Most
-people would probably still call XML human-readable, but arguebly less so than
-JSON. Second, it's easier to read than binary encodings produced by, for
-example, MessagePack, ASN.1 or Protobuf. For example, the JSON string `"foo"` is
-represented by the following byte sequence in MessagePack:
+What does that mean exactly? I suppose that people usually mean two things.
+First, it's less verbose than XML, making it easier to read. Most people would
+probably still call XML human-readable, but arguebly less so than JSON. Second,
+it's easier to read than binary encodings produced by, for example, MessagePack,
+ASN.1 or Protobuf. For example, the JSON string `"foo"` is represented by the
+following byte sequence when using MessagePack:
 
 ```
-    a3 66 6f 6f
-    ^  ^  ^  ^
-    |  |  |  |
-    |  |  +--+--------------------------------- The character 'o'
-    |  |
-    |  +-------------------- The character 'f'
-    |
-    +--- String of length 3
+                 +------------ A string of length 3 consisting of ...
+                 |  +--------- ... the character 'f', following by ...
+                 |  |  +--+--- ... two 'o' characters.
+                 |  |  |  |
+                 v  v  v  v
+                 a3 66 6f 6f
 ```
 
 If we were to open a file with the above bytes or echo them to the terminal we'd
-see `úfoo`, which while one character shorter[^1] than the JSON string is borderline
-unreadable (and will be worse once the JSON object is more complicated).
+see `£foo`. Which while one character shorter[^1] than the JSON string, it's
+starting to become unreadable already and it will become worse once the JSON
+object is more complicated.
 
-At the end of the day, even with plain JSON, we serialise into bytes though. If
-we `hexdump` a file containing the JSON string `"foo"` we see the byte sequence
-`22 66 6f 6f 22` where `22` is hex for the double quote character. So arguably
-JSON is only human-readable because our editors and standard terminal utilities
-display bytes as ASCII or UTF-8.
-
-This isn't a new argument, of course. People like
+It's worth noting that all serialised data ends up being bytes once on disk or
+sent over the network. So in a sense one could argue that the only reason JSON
+is human-readable, is because these bytes get displayed as ASCII or UTF-8 by our
+editors and the standard terminal utilities. This isn't a new argument, people
+like
 [Joe](https://youtu.be/ieEaaofM7uU?list=PL_aCdZH3eJJVki0YqHbJtqZKSmcbXH0jP&t=28)
 [Armstrong](https://youtu.be/rQIE22e0cW8?t=2003) and [Martin
 Thompson](https://youtu.be/qDhTjE0XmkE?t=2280) have separately and on multiple
 occasions pointed this out. Both stress that we are wasting massive amounts of
 CPU cycles on parsing JSON.
 
-It's not just that it's less space efficient, as we saw with `"foo"` vs `úfoo`,
+It's not just that it's less space efficient, as we saw with `"foo"` vs `£foo`,
 it's also because with JSON we need to inspect every single character after the
 first `"` in order to determine when the string ends. Whereas in, for example,
-the MessagePack case the length of the string is encoded in the `ú` so we can
+the MessagePack case the length of the string is encoded in the `£` so we can
 jump forward and just copy the three bytes (without looking at them). Joe
 calls this *reconstructing* as opposed to parsing.
 
@@ -49,8 +51,12 @@ So if JSON is merely human-readable because of our application-level tooling,
 this raises the question: what would it take to make binary encodings
 "human-readable"?
 
-I'd like spend the rest of this post exploring this question by means of writing
-a library for working with binary data, inspired by Erlang's bit syntax.
+For example, I believe Erlang's bit syntax, which we shall have a look at next,
+is trying to make working with binary encodings more accessible to programmers,
+but I also think we can go further.
+
+So I'd like spend the rest of this post exploring this question by means of
+writing a library for working with binary data, inspired by Erlang's bit syntax.
 
 ## Erlang's bit syntax
 
@@ -157,8 +163,8 @@ The high-level idea when encoding a bunch of, possibly sized, values into a
   3. Concatenate the lists of booleans for each value into a single list of
      booleans;
   4. Split the list in groups of 8 bits;
-  5. Convert each 8 bits into a byte (`Word8`);
-  6. Create a `ByteString` from list of `Word8`s.
+  5. Convert each 8 bits into a byte (`UInt8`);
+  6. Create a `ByteString` from list of `UInt8`s.
 
 For decoding or pattern-matching a, possibly sized, pattern against a
 `ByteString` the idea is:
@@ -168,7 +174,7 @@ For decoding or pattern-matching a, possibly sized, pattern against a
   3. Convert the bits into the value type of the pattern;
   4. Continue matching the remaining patterns against the remaining bits.
 
-`Float` and `Double`s get converted into `Word32` and `Word64` respectively
+`Float` and `Double`s get converted into `UInt32` and `UInt64` respectively
 before converted into bits, and `Int`egers are encoding using
 [zigzag](https://en.wikipedia.org/wiki/Variable-length_quantity#Zigzag_encoding)
 encoding[^2].
@@ -394,7 +400,9 @@ One implementation can be found
 
 The current implementation is in Haskell, but I'd really like to encourage a
 discussion beyond specific languages. In order to make binary "human-readable"
-we need solutions that are universal.
+we need solutions that are universal, i.e. work in any language, or perhaps
+better yet than libraries -- extend programming languages with something like
+Erlang's bit syntax.
 
 * Do you have use cases that are not listed above?
 * Do you know of tools, libraries or solutions any of the above use cases that
@@ -431,6 +439,7 @@ If so, feel free to get in touch!
   2017);
 * *Development and Deployment of Multiplayer Online Games, Vol. I* by Sergey
    Ignatchenko (pp. 200-216 and 259-285, 2017).
+
 
 [^1]: The savings are greater for more complicated JSON objects, especially
     considering JSON doesn't support binary data which needs to be either
