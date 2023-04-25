@@ -10,13 +10,16 @@
 module BitsAndBobs.Codec (module BitsAndBobs.Codec) where
 
 import Control.Applicative
-import Data.ByteString
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Internal as BS
 import qualified Data.ByteString.Unsafe as BS
 import qualified Data.Map.Strict as Map
+import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
+import Debug.Trace
 import Foreign
 import Foreign.Marshal.Utils (copyBytes)
 import GHC.Exts
@@ -32,18 +35,156 @@ import BitsAndBobs.Schema
 ------------------------------------------------------------------------
 
 class Encode a where
-  encode :: Schema -> a -> Block b -> IO (Either EncodeError ())
+  encode :: Schema -> Accessor -> a -> Block b -> IO ()
 
   default encode :: (Generic a, Encode1 (Rep a))
-                 => Schema -> a -> Block b -> IO (Either EncodeError ())
+                 => Schema -> Accessor -> a -> Block b -> IO ()
   encode = genericEncode
 
 class Decode a where
-  decode :: Schema -> Block b -> Either DecodeError a
+  decode :: Schema -> Accessor -> Block b -> a
 
   default decode :: (Generic a, Decode1 (Rep a))
-                 => Schema -> Block b -> Either DecodeError a
+                 => Schema -> Accessor -> Block b -> a
   decode = genericDecode
+
+------------------------------------------------------------------------
+
+genericDecode :: (Generic a, Decode1 (Rep a)) => Schema -> Accessor -> Block b -> a
+genericDecode schema accessor block = to (decode1 schema accessor block)
+
+class Decode1 f where
+  decode1 :: Schema -> Accessor -> Block b -> f p
+
+instance Decode1 f => Decode1 (M1 D c f) where
+  decode1 schema accessor block = M1 (decode1 schema accessor block)
+
+instance Decode1 f => Decode1 (M1 C c f) where
+  decode1 schema accessor block = M1 (decode1 schema accessor block)
+
+instance (Selector s, Decode a) => Decode1 (M1 S s (K1 i [a])) where
+  decode1 schema accessor block =
+    let
+      m :: M1 i s f a
+      m = undefined
+    in
+      M1 (K1 (decodeArray schema (accessor :. Field (fromString (selName m))) block))
+    where
+      decodeArray :: Decode a => Schema -> Accessor -> Block b -> [a]
+      decodeArray schema accessor block = go len []
+        where
+          len = accessorLength schema accessor block
+
+          go n acc | n == 0    = acc
+                   | otherwise =
+                       let
+                         x = decode schema (accessor :. Index (n - 1)) block
+                       in
+                         go (n - 1) (x : acc)
+
+      accessorLength :: Schema -> Accessor -> Block b -> Int
+      accessorLength schema accessor block =
+        case lookupAccessorType (Record schema) accessor of
+          Array      (Fixed len) _ty -> len
+          ByteString (Fixed len)     -> len
+
+          Array      (Variable lenField) _ty ->
+            fromIntegral (readInt32 block (fieldOffset_ schema lenField block))
+          ByteString (Variable lenField)     ->
+            fromIntegral (readInt32 block (fieldOffset_ schema lenField block))
+
+instance {-# OVERLAPPABLE #-} (Selector s, Decode a) => Decode1 (M1 S s (K1 i a)) where
+  decode1 schema accessor block =
+    let
+      m :: M1 i s f a
+      m = undefined
+    in
+      M1 (K1 (decodeAccessor schema (accessor :. Field (fromString (selName m))) block))
+
+instance (Decode1 f, Decode1 g) => Decode1 (f :*: g) where
+  decode1 schema accessor block = decode1 schema accessor block :*: decode1 schema accessor block
+
+------------------------------------------------------------------------
+
+genericEncode :: (Generic a, Encode1 (Rep a)) => Schema -> Accessor -> a -> Block b -> IO ()
+genericEncode schema accessor x block = encode1 schema accessor (from x) block
+
+class Encode1 f where
+  encode1 :: Schema -> Accessor -> f p -> Block b -> IO ()
+
+instance Encode1 f => Encode1 (M1 D c f) where
+  encode1 schema accessor (M1 x) block = encode1 schema accessor x block
+
+instance Encode1 f => Encode1 (M1 C c f) where
+  encode1 schema accessor (M1 x) block = encode1 schema accessor x block
+
+instance (Selector s, Encode a, Show a) => Encode1 (M1 S s (K1 i [a])) where
+  encode1 schema accessor (M1 (K1 xs)) block =
+    let
+      m :: M1 i s f a
+      m = undefined
+    in
+      encodeArray schema (accessor :. Field (fromString (selName m))) xs block
+    where
+      encodeArray :: Encode a => Schema -> Accessor -> [a] -> Block b -> IO ()
+      encodeArray schema accessor xs block = go 0 xs
+        where
+          go _i []       = return ()
+          go  i (x : xs) = do
+            encode schema (accessor :. Index i) x block
+            go (i + 1) xs
+
+instance {-# OVERLAPPABLE #-} (Selector s, Encode a, Show a) => Encode1 (M1 S s (K1 i a)) where
+  encode1 schema accessor (M1 (K1 x)) block =
+    let
+      m :: M1 i s f a
+      m = undefined
+    in
+      encodeAccessor schema (accessor :. Field (fromString (selName m))) block x
+
+instance (Encode1 f, Encode1 g) => Encode1 (f :*: g) where
+  encode1 schema accessor (x :*: y) block = do
+    encode1 schema accessor x block
+    encode1 schema accessor y block
+
+------------------------------------------------------------------------
+
+instance Encode Int32 where
+  encode schema accessor (I32# i32#) block =
+    withBlockAddr block $ \addr# ->
+      IO $ \s ->
+        (# writeInt32OffAddr# (addr# `plusAddr#` offset#) 0# i32# s, () #)
+    where
+      I# offset# = accessorOffset (Record schema) accessor block
+
+instance Encode ByteString where
+  encode schema accessor bs block =
+    -- This is safe because we are not changing `src`.
+    BS.unsafeUseAsCStringLen bs $ \(src, len) ->
+     copyBytes (blockPtr block `plusPtr` offset) (castPtr src) len
+    where
+      offset = accessorOffset (Record schema) accessor block
+
+instance Decode Int32 where
+  decode schema accessor block = withBlockAddr block $ \addr# ->
+    I32# (indexInt32OffAddr# (addr# `plusAddr#` offset#) 0#)
+    where
+      I# offset# = accessorOffset (Record schema) accessor block
+
+instance Decode ByteString where
+  decode schema accessor block =
+    BS.unsafeCreate len (\dst -> copyBytes dst (castPtr src) len)
+    where
+      src = blockPtr block `plusPtr` offset
+      len = case lookupAccessorType (Record schema) accessor of
+              ByteString (Fixed len) -> len
+              ByteString (Variable lenField) -> fromIntegral (readInt32 block (fieldOffset_ schema lenField block))
+              ByteString NullTerminated -> undefined
+              Magic bs -> BS.length bs
+              ty -> error (show ty)
+      offset = accessorOffset (Record schema) accessor block
+
+------------------------------------------------------------------------
 
 verifyMagic :: Schema -> Block a -> IO Bool
 verifyMagic schema block = go True (Map.toList (schemaTypes schema))
@@ -51,21 +192,9 @@ verifyMagic schema block = go True (Map.toList (schemaTypes schema))
     go False _                          = return False
     go _acc []                          = return True
     go acc ((field, Magic magic) : fts) = do
-      let eBs = decodeAccessor schema (Field field) block
-      case eBs of
-        Left _decodeError -> return False
-        Right bs          -> go (bs == magic && acc)fts
+      let bs = decodeAccessor schema (Field field) block
+      go (bs == magic && acc) fts
     go acc ((_field, _type) : fts) = go acc fts
-
-data DecodeError
-  = WrongField Field
-  | WrongType Type
-  | WrongLengthType Type
-  | WrongLengthField Field
-  | FieldUnknownOffset Field
-  | LengthFieldUnknownOffset Field
---  | TypeError AccessorTypeError
-  deriving stock (Eq, Show)
 
 data Value = ByteStringV ByteString
   deriving Show
@@ -81,121 +210,27 @@ readValue schema field text =
       case ty of
         ByteString _ -> ByteStringV <$> readEither (Text.unpack text) -- XXX: use parser?
 
-decodeField' :: Schema -> Field -> Block a -> Either DecodeError Value
-decodeField' schema field block =
+decodeField :: Schema -> Field -> Block a -> Either String Value
+decodeField schema field block =
   case lookupFieldType field schema of
-    Nothing -> Left (WrongField field)
-    Just (ByteString _) -> ByteStringV <$> decodeAccessor schema (Field field) block
+    Nothing -> Left ("WrongField: " ++ show field)
+    Just (ByteString _) -> return (ByteStringV (decodeAccessor schema (Field field) block))
 
-encodeField' :: Schema -> Field -> Block a -> Value -> IO (Either EncodeError ())
-encodeField' schema field block (ByteStringV bs) = encodeAccessor schema (Field field) block bs
+encodeField :: Schema -> Field -> Block a -> Value -> IO ()
+encodeField schema field block (ByteStringV bs) = encodeAccessor schema (Field field) block bs
 
-
-encodeAccessor :: EncodeValue a => Schema -> Accessor -> Block b -> a -> IO (Either EncodeError ())
+encodeAccessor :: Encode a => Schema -> Accessor -> Block b -> a -> IO ()
 encodeAccessor schema accessor block x =
   case typeCheckAccessor schema accessor of
-    Left err -> Left <$> error "EncodeTypeError err"
+    Left err -> error "EncodeTypeError err"
     Right () -> case boundCheck schema accessor block of
-      Left err -> Left <$> error "EncodeBoundCheck err"
-      Right () -> Right <$> encodeValue x (access schema accessor block)
+      Left err -> error "EncodeBoundCheck err"
+      Right () -> encode schema accessor x block
 
-decodeAccessor :: DecodeValue a => Schema -> Accessor -> Block b -> Either DecodeError a
+decodeAccessor :: Decode a => Schema -> Accessor -> Block b -> a
 decodeAccessor schema accessor block =
   case typeCheckAccessor schema accessor of
-    Left err -> Left (error "DecodeTypeError err")
+    Left err -> error "DecodeTypeError err"
     Right () -> case boundCheck schema accessor block of
-      Left err -> Left (error "BoundCheck err")
-      Right () -> Right (decodeValue (access schema accessor block))
-
-sizeOfType' :: Schema -> Accessor -> Block a -> Int32
-sizeOfType' schema accessor block = decodeValue (access schema accessor block)
-
-access :: Schema -> Accessor -> Block a -> Block b
-access schema accessor block = Block ptr (fromIntegral len)
-  where
-    offset = accessorOffset (Record schema) accessor
-    ptr | offset >= 0 = castPtr (blockPtr block `plusPtr` offset)
-        | otherwise   = castPtr (blockPtr block `plusPtr` fromIntegral (blockLength block) `plusPtr` offset)
-    len = case lookupAccessorType (Record schema) accessor of
-      ByteString (Variable lenField) -> fromIntegral (sizeOfType' schema (Field lenField) block)
-      ty -> sizeOfType_ ty
-
-class EncodeValue a where
-  encodeValue :: a -> Block b -> IO ()
-
-instance EncodeValue Int32 where
-  encodeValue (I32# i32#) block =
-    withBlockAddr block $ \addr# ->
-      IO $ \s ->
-        (# writeInt32OffAddr# addr# 0# i32# s, () #)
-
-instance EncodeValue ByteString where
-  encodeValue bs block =
-    -- This is safe because we are not changing `src`.
-    BS.unsafeUseAsCStringLen bs $ \(src, len) ->
-      copyBytes (blockPtr block) (castPtr src) len
-
-class DecodeValue a where
-  decodeValue :: Block b -> a
-
-instance DecodeValue Int32 where
-  decodeValue block = withBlockAddr block $ \addr# ->
-    I32# (indexInt32OffAddr# addr# 0#)
-
-instance DecodeValue ByteString where
-  decodeValue block =
-    BS.unsafeCreate len (\ptr -> copyBytes ptr (castPtr (blockPtr block)) len)
-    where
-      len = fromIntegral (blockLength block)
-
-------------------------------------------------------------------------
-
-genericDecode :: (Generic a, Decode1 (Rep a)) => Schema -> Block b -> Either DecodeError a
-genericDecode schema block = fmap to (decode1 schema block)
-
-class Decode1 f where
-  decode1 :: Schema -> Block b -> Either DecodeError (f p)
-
-instance Decode1 f => Decode1 (M1 D c f) where
-  decode1 schema block = fmap M1 (decode1 schema block)
-
-instance Decode1 f => Decode1 (M1 C c f) where
-  decode1 schema block = fmap M1 (decode1 schema block)
-
-instance (Selector s, DecodeValue a) => Decode1 (M1 S s (K1 i a)) where
-  decode1 schema block =
-    let
-      m :: M1 i s f a
-      m = undefined
-    in
-      fmap (M1 . K1) (decodeAccessor schema (Field (fromString (selName m))) block)
-
-instance (Decode1 f, Decode1 g) => Decode1 (f :*: g) where
-  decode1 schema block = liftA2 (:*:) (decode1 schema block) (decode1 schema block)
-
-------------------------------------------------------------------------
-
-genericEncode :: (Generic a, Encode1 (Rep a)) => Schema -> a -> Block b -> IO (Either EncodeError ())
-genericEncode schema x block = encode1 schema (from x) block
-
-class Encode1 f where
-  encode1 :: Schema -> f p -> Block b -> IO (Either EncodeError ())
-
-instance Encode1 f => Encode1 (M1 D c f) where
-  encode1 schema (M1 x) block = encode1 schema x block
-
-instance Encode1 f => Encode1 (M1 C c f) where
-  encode1 schema (M1 x) block = encode1 schema x block
-
-instance (Selector s, EncodeValue a) => Encode1 (M1 S s (K1 i a)) where
-  encode1 schema (M1 (K1 x)) block =
-    let
-      m :: M1 i s f a
-      m = undefined
-    in
-      encodeAccessor schema (Field (fromString (selName m))) block x
-
-instance (Encode1 f, Encode1 g) => Encode1 (f :*: g) where
-  encode1 schema (x :*: y) block = do
-    encode1 schema x block
-    encode1 schema y block
+      Left err -> error "BoundCheck err"
+      Right () -> decode schema accessor block

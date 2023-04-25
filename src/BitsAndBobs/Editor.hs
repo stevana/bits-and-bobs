@@ -11,6 +11,7 @@ import qualified Data.Text.IO as Text
 import System.Exit
 import System.IO
 
+import BitsAndBobs.Accessor
 import BitsAndBobs.Block
 import BitsAndBobs.Codec
 import BitsAndBobs.Schema
@@ -43,19 +44,17 @@ edit (Edit name schema) file = do
             ["help"]   -> Text.putStrLn help >> loop
             ["schema"] -> Text.putStrLn (prettySchema schema) >> loop
             ["read", field] ->
-              case decodeField' schema (MkField field) block of
+              case decodeField schema (MkField field) block of
                 Right v -> Text.putStrLn (prettyValue v) >> loop
                 Left err -> putStrLn ("decode error: " ++ show err) >> loop
             ["write", field, value] ->
               case readValue schema (MkField field) value of
                 Left err -> putStrLn ("read error: " ++ err) >> loop
                 Right value' -> do
-                  r <- encodeField' schema (MkField field) block value'
-                  case r of
-                    Right () -> loop
-                    Left err -> putStrLn ("encode error: " ++ show err) >> loop
+                  encodeField schema (MkField field) block value'
+                  loop
             ["list"] -> do
-              print (decode schema block :: Either DecodeError a)
+              print (decode schema Id block :: a)
               loop
             ["q"]      -> exitSuccess
             ["quit"]   -> exitSuccess

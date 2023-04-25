@@ -435,6 +435,7 @@ If so, feel free to get in touch!
   this
   [talk](https://www.youtube.com/watch?v=GJOq_b0eb-s&list=PLTj8twuHdQz-JcX7k6eOwyVPDB8CyfZc8&index=1);
 * [Terminal JSON viewer](https://github.com/antonmedv/fx);
+* Rust's [binrw](https://github.com/jam1garner/binrw) crate;
 * *Designing Data-Intensive Applications* by Martin Kleppmann (chapter 3-4,
   2017);
 * *Development and Deployment of Multiplayer Online Games, Vol. I* by Sergey
