@@ -8,7 +8,6 @@
 
 module BitsAndBobs.Schema (module BitsAndBobs.Schema) where
 
-import Control.Applicative
 import Control.Exception
 import Control.Monad.Except
 import Data.ByteString (ByteString)
@@ -79,43 +78,12 @@ prettySchema = go [] . schemaToList
 prettyType :: Type -> Text
 prettyType = Text.pack . show -- XXX
 
-fieldOffset :: Schema -> Field -> Maybe Int
-fieldOffset schema field
-  =   go  (Just 0) (schemaToList schema)
-  <|> go' (Just 0) (schemaToReverseList schema)
-  where
-    go _acc [] = Nothing
-    go acc ((field', ty) : fts)
-      | field == field' = acc
-      | otherwise       = go ((+) <$> acc <*> sizeOfType ty) fts
-
-    go' _acc [] = Nothing
-    go' acc ((field', ty) : fts)
-      | field == field' = fmap negate ((+) <$> acc <*> sizeOfType ty)
-      | otherwise       = go' ((+) <$> acc <*> sizeOfType ty) fts
-
-fieldOffset_ :: Schema -> Field -> Int
-fieldOffset_ schema = fromJust . fieldOffset schema
-
-sizeOfType :: Type -> Maybe Int
-sizeOfType (Magic bs)                        = Just (BS.length bs)
-sizeOfType UInt8                             = Just (sizeOf (1 :: Word8))
-sizeOfType Int32                             = Just (sizeOf (4 :: Int32))
-sizeOfType (ByteString (Fixed len))          = Just len
-sizeOfType (Record schema)                   = fmap sum (sequence (map sizeOfType (map snd (schemaToReverseList schema))))
-sizeOfType (Array (Fixed len) ty)            = (*) <$> pure len <*> sizeOfType ty
-sizeOfType (ByteString (Variable _lenField)) = Nothing
-sizeOfType Binary                            = Nothing
-sizeOfType ty = error (show ty)
-
-sizeOfType_ :: Type -> Int
-sizeOfType_ = fromJust . sizeOfType
-
-data EncodeError = EncodeTypeError FieldTypeError | OutOfBoundsError FieldOutOfBoundsError
-  deriving stock Show
-
-data FieldTypeError = FTE
-  deriving stock Show
-
-data FieldOutOfBoundsError = FOOB
-  deriving stock Show
+sizeOfType :: Type -> Int
+sizeOfType (Magic bs)               = BS.length bs
+sizeOfType UInt8                    = sizeOf (1 :: Word8)
+sizeOfType Int32                    = sizeOf (4 :: Int32)
+sizeOfType (ByteString (Fixed len)) = len
+sizeOfType (Record schema)          = sum (map sizeOfType (map snd (schemaToReverseList schema)))
+sizeOfType (Array (Fixed len) ty)   = len * sizeOfType ty
+sizeOfType Binary                   = -1
+sizeOfType ty                       = error (show ty)
