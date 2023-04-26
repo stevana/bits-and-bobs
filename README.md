@@ -382,6 +382,30 @@ though he gave several [talks](https://youtu.be/ed7A7r6DBsM?t=1071) about it.
 One implementation can be found
 [here](https://ubf.github.io/ubf/ubf-user-guide.en.html).
 
+### Pandoc for binary encodings
+
+There's this neat tool called [`pandoc`](https://github.com/jgm/pandoc) that
+makes possible to convert between different text formats, e.g. from Markdown to
+HTML.
+
+The list of supported formats to convert from and to is pretty long. If we were
+to convert to and from each pair of possibilities would require $O(N^2)$
+[work](https://youtu.be/ed7A7r6DBsM?t=2311). So what `pandoc` does instead is to
+convert each format to and from its internal abstract representation, thereby
+reducing the problem to $O(N)$.
+
+Could we do something similar for binary encodings?
+
+In the book *Development and Deployment of Multiplayer Online Games, Vol. I* by
+Sergey Ignatchenko (pp. 259-285, 2017) the author talks about how most
+[IDLs](https://en.wikipedia.org/wiki/Interface_description_language), e.g.
+Protobufs, have the same language for describing *what* the abstract data which
+we want to serialise and *how* we actually want the data to be serialised. By
+separating the two, we could change the binary format "on the wire" without
+changing the application which operates on the abstract data (the *what* part).
+A clearer separation between IDL and its encoding could perhaps be useful when
+trying to solve the `pandoc` problem for binary.
+
 ## Discussion
 
 * Q: Why not just use [Protobuf](https://en.wikipedia.org/wiki/Protocol_Buffers)?
