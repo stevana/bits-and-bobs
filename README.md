@@ -1,7 +1,7 @@
 # Towards human-readable binary encodings
 
-Can we make binary encodings human-readable? This post explores this question by
-means of implementing a library inspired by Erlang's bit syntax.
+Can we make binary encodings "human-readable"? This post explores this question
+by means of implementing a library inspired by Erlang's bit syntax.
 
 ## Motivation
 
@@ -11,8 +11,8 @@ frequent argument for using it is that JSON is human-readable.
 What does that mean exactly? I suppose that people usually mean two things.
 First, it's less verbose than XML, making it easier to read. Most people would
 probably still call XML human-readable, but arguebly less so than JSON. Second,
-it's easier to read than binary encodings produced by, for example, MessagePack,
-ASN.1 or Protobuf. For example, the JSON string `"foo"` is represented by the
+it's easier to read than binary encodings produced by MessagePack, ASN.1 or
+Protobuf, etc. For example, the JSON string `"foo"` is represented by the
 following byte sequence when using MessagePack:
 
 ```
@@ -25,38 +25,45 @@ following byte sequence when using MessagePack:
 ```
 
 If we were to open a file with the above bytes or echo them to the terminal we'd
-see `£foo`. Which while one character shorter[^1] than the JSON string, it's
+see `£foo`. Which, while one character shorter[^1] than the JSON string, is
 starting to become unreadable already and it will become worse once the JSON
 object is more complicated.
 
 It's worth noting that all serialised data ends up being bytes once on disk or
-sent over the network. So in a sense one could argue that the only reason JSON
-is human-readable, is because these bytes get displayed as ASCII or UTF-8 by our
-editors and the standard terminal utilities. This isn't a new argument, people
-like
-[Joe](https://youtu.be/ieEaaofM7uU?list=PL_aCdZH3eJJVki0YqHbJtqZKSmcbXH0jP&t=28)
-[Armstrong](https://youtu.be/rQIE22e0cW8?t=2003) and [Martin
-Thompson](https://youtu.be/qDhTjE0XmkE?t=2280) have separately and on multiple
-occasions pointed this out. Both stress that we are wasting massive amounts of
-CPU cycles on parsing JSON.
+sent over the network. So in a sense one could argue that the reason JSON is
+human-readable, is because these bytes get displayed as ASCII or UTF-8 by our
+editors and the standard terminal utilities. Another way to think about it is
+that ASCII and UTF-8 are encodings as well, which would be unreadable without
+tool support. This isn't a new argument, people like [Joe
+Armstrong](https://youtu.be/ieEaaofM7uU?list=PL_aCdZH3eJJVki0YqHbJtqZKSmcbXH0jP&t=28)
+and [Martin Thompson](https://youtu.be/qDhTjE0XmkE?t=2280) have separately and
+on [multiple](https://youtu.be/rQIE22e0cW8?t=2003) occasions pointed this out.
+Both stress that we are [wasting](https://youtu.be/bzDAYlpSbrM?t=1481) massive
+amounts of CPU cycles on parsing JSON.
 
 It's not just that it's less space efficient, as we saw with `"foo"` vs `£foo`,
 it's also because with JSON we need to inspect every single character after the
-first `"` in order to determine when the string ends. Whereas in, for example,
-the MessagePack case the length of the string is encoded in the `£` so we can
-jump forward and just copy the three bytes (without looking at them). Joe
-calls this *reconstructing* as opposed to parsing.
+first `"` in order to determine when the string ends, i.e. finding the closing
+`"`. Whereas in, for example, the MessagePack case the length of the string is
+encoded in the `a3` byte so we can jump forward and just copy the three bytes
+(without looking at them). Joe calls this *reconstructing* as opposed to
+parsing.
 
 So if JSON is merely human-readable because of our application-level tooling,
 this raises the question: what would it take to make binary encodings
 "human-readable"?
 
-For example, I believe Erlang's bit syntax, which we shall have a look at next,
-is trying to make working with binary encodings more accessible to programmers,
-but I also think we can go further.
+For starters I think we'd need to make it easier to work with binary data in our
+programming languages. I believe Erlang's bit syntax, which lets us do bit-level
+pattern-matching, is a good example of what better language support for working
+with binary data looks like. Even though Erlang's way ahead most programming
+languages on this front, there are important use cases which are not possible to
+express efficiently using bit syntax though, e.g. in-place updates, leaving more
+to be desired.
 
-So I'd like spend the rest of this post exploring this question by means of
-writing a library for working with binary data, inspired by Erlang's bit syntax.
+In the rest of this post we'll have first have a look at how Erlang's bit syntax
+works, then we'll turn to its shortcomings and try to start addressing them by
+means of implementing a library.
 
 ## Erlang's bit syntax
 
@@ -374,6 +381,30 @@ sessions type checker, it never seemed to have got much traction though even
 though he gave several [talks](https://youtu.be/ed7A7r6DBsM?t=1071) about it.
 One implementation can be found
 [here](https://ubf.github.io/ubf/ubf-user-guide.en.html).
+
+### Pandoc for binary encodings
+
+There's this neat tool called [`pandoc`](https://github.com/jgm/pandoc) that
+makes possible to convert between different text formats, e.g. from Markdown to
+HTML.
+
+The list of supported formats to convert from and to is pretty long. If we were
+to convert to and from each pair of possibilities would require $O(N^2)$
+[work](https://youtu.be/ed7A7r6DBsM?t=2311). So what `pandoc` does instead is to
+convert each format to and from its internal abstract representation, thereby
+reducing the problem to $O(N)$.
+
+Could we do something similar for binary encodings?
+
+In the book *Development and Deployment of Multiplayer Online Games, Vol. I* by
+Sergey Ignatchenko (pp. 259-285, 2017) the author talks about how most
+[IDLs](https://en.wikipedia.org/wiki/Interface_description_language), e.g.
+Protobufs, have the same language for describing *what* the abstract data which
+we want to serialise and *how* we actually want the data to be serialised. By
+separating the two, we could change the binary format "on the wire" without
+changing the application which operates on the abstract data (the *what* part).
+A clearer separation between IDL and its encoding could perhaps be useful when
+trying to solve the `pandoc` problem for binary.
 
 ## Discussion
 
