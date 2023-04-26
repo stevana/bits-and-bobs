@@ -406,6 +406,8 @@ changing the application which operates on the abstract data (the *what* part).
 A clearer separation between IDL and its encoding could perhaps be useful when
 trying to solve the `pandoc` problem for binary.
 
+Another way to think of this is: can we make a DSL for IDLs?
+
 ## Discussion
 
 * Q: Why not just use [Protobuf](https://en.wikipedia.org/wiki/Protocol_Buffers)?
